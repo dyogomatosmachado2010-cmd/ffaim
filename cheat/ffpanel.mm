@@ -359,17 +359,20 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
 
 @end
 
-// ---------------------------------------------------------------- window
+// ---------------------------------------------------------------- overlay
 
-@interface FFOverlayWindow : UIWindow
+// camada cheia presa na propria view do jogo. janela separada depende de cena,
+// de keyWindow e de ordem de criacao - tres coisas que o Unity mexe. subview da
+// view do jogo aparece sempre, inclusive no meio da partida.
+@interface FFOverlayView : UIView
 @end
 
-@implementation FFOverlayWindow
+@implementation FFOverlayView
 
-// so o painel recebe toque; o resto passa pro jogo
+// so o painel recebe toque; o resto atravessa pro jogo
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *v = [super hitTest:point withEvent:event];
-    if (v == self || v == self.rootViewController.view) return nil;
+    if (v == self) return nil;
     return v;
 }
 
@@ -377,7 +380,7 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
 
 // ---------------------------------------------------------------- estado
 
-static FFOverlayWindow *g_win = nil;
+static FFOverlayView *g_container = nil;
 static FFPanelView *g_panel = nil;
 static FFEspView *g_esp = nil;
 static BOOL g_visible = YES;
@@ -460,78 +463,86 @@ static void hook_sendEvent(id self, SEL _cmd, UIEvent *ev) {
 
 // ---------------------------------------------------------------- instalacao
 
-static void ffInstallUI(int attempt);
+// janela principal do jogo: cena ativa primeiro, caminho antigo depois.
+static UIWindow *ffKeyWindow(void) {
+    UIApplication *app = [UIApplication sharedApplication];
 
-static void ffInstallUI(int attempt) {
-    if (g_win) return;
-
-    if (![NSThread isMainThread]) {
-        dispatch_async(dispatch_get_main_queue(), ^{ ffInstallUI(attempt); });
-        return;
-    }
-
-    UIWindow *key = nil;
     if (@available(iOS 13.0, *)) {
-        for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+        UIWindowScene *scene = nil;
+        for (UIScene *s in app.connectedScenes) {
             if (![s isKindOfClass:[UIWindowScene class]]) continue;
-            for (UIWindow *w in ((UIWindowScene *)s).windows) {
-                if (w.isKeyWindow) { key = w; break; }
+            if (s.activationState == UISceneActivationStateForegroundActive) {
+                scene = (UIWindowScene *)s;
+                break;
             }
-            if (key) break;
+            if (!scene) scene = (UIWindowScene *)s;
         }
-    }
-    if (!key) {
-        // fallback pre-cena (iOS 12). o aviso de deprecated e silenciado no build.
-        id app = [UIApplication sharedApplication];
-        SEL kw = NSSelectorFromString(@"keyWindow");
-        if ([app respondsToSelector:kw]) {
-            IMP f = [app methodForSelector:kw];
-            if (f) key = ((id (*)(id, SEL))f)(app, kw);
+        if (scene) {
+            for (UIWindow *w in scene.windows) if (w.isKeyWindow) return w;
+            for (UIWindow *w in scene.windows)
+                if (w.windowLevel == UIWindowLevelNormal) return w;
         }
     }
 
-    if (!key) {
-        if (attempt < 80) {
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ ffInstallUI(attempt + 1); });
+    SEL kw = NSSelectorFromString(@"keyWindow");
+    if ([app respondsToSelector:kw]) {
+        IMP f = [app methodForSelector:kw];
+        if (f) {
+            id w = ((id (*)(id, SEL))f)(app, kw);
+            if (w) return w;
         }
+    }
+    for (UIWindow *w in app.windows)
+        if (w.windowLevel == UIWindowLevelNormal) return w;
+    return nil;
+}
+
+// monta uma vez, prende na view do jogo e traz pra frente. chamado de novo a
+// cada 0,5 s enquanto a camada estiver fora da hierarquia - o Unity troca de
+// view em cena, loading e volta de segundo plano.
+static void ffAttach(void) {
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ ffAttach(); });
         return;
     }
+
+    UIWindow *key = ffKeyWindow();
+    if (!key) return;
+    UIView *host = key.rootViewController.view ?: key;
+    if (!host) return;
 
     @try {
-        CGRect sb = [UIScreen mainScreen].bounds;
+        if (!g_container) {
+            g_container = [[FFOverlayView alloc] initWithFrame:host.bounds];
+            g_container.backgroundColor = [UIColor clearColor];
+            g_container.multipleTouchEnabled = YES;
+            g_container.autoresizingMask = UIViewAutoresizingFlexibleWidth |
+                                           UIViewAutoresizingFlexibleHeight;
 
-        g_win = [[FFOverlayWindow alloc] initWithFrame:sb];
-        if (@available(iOS 13.0, *)) g_win.windowScene = key.windowScene;
-        g_win.windowLevel = UIWindowLevelAlert + 100;
-        g_win.backgroundColor = [UIColor clearColor];
-        g_win.multipleTouchEnabled = YES;
+            g_esp = [[FFEspView alloc] initWithFrame:g_container.bounds];
+            g_esp.autoresizingMask = UIViewAutoresizingFlexibleWidth |
+                                     UIViewAutoresizingFlexibleHeight;
+            [g_container addSubview:g_esp];
 
-        UIViewController *vc = [UIViewController new];
-        vc.view.backgroundColor = [UIColor clearColor];
-        vc.view.multipleTouchEnabled = YES;
-        g_win.rootViewController = vc;
-        [g_win setHidden:NO];
+            g_panel = [[FFPanelView alloc] initWithFrame:CGRectMake(0, 0, PANEL_W, 10)];
+            CGFloat ph = [g_panel fullHeight];
+            g_panel.frame = CGRectMake(host.bounds.size.width - PANEL_W - 12, 90, PANEL_W, ph);
+            [g_container addSubview:g_panel];
+        }
 
-        g_esp = [[FFEspView alloc] initWithFrame:sb];
-        [vc.view addSubview:g_esp];
-
-        g_panel = [[FFPanelView alloc] initWithFrame:CGRectMake(0, 0, PANEL_W, 10)];
-        CGFloat ph = [g_panel fullHeight];
-        g_panel.frame = CGRectMake(sb.size.width - PANEL_W - 12, 90, PANEL_W, ph);
-        [vc.view addSubview:g_panel];
-
-        // o painel mostra o estado do hook; sem isso o usuario nao tem como saber
-        // se o aimbot/esp estao ativos sem um console.
-        NSTimer *t = [NSTimer timerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) {
-            [g_panel refreshStatus];
-        }];
-        [[NSRunLoop mainRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
-
-        NSLog(@"[ffaim] painel instalado em %.0fx%.0f", sb.size.width, sb.size.height);
+        if (g_container.superview != host) {
+            g_container.frame = host.bounds;
+            [host addSubview:g_container];
+            g_panel.frame = CGRectMake(host.bounds.size.width - PANEL_W - 12, 90,
+                                       PANEL_W, [g_panel fullHeight]);
+            NSLog(@"[ffaim] painel preso em %.0fx%.0f", host.bounds.size.width,
+                  host.bounds.size.height);
+        } else {
+            [host bringSubviewToFront:g_container];
+        }
     } @catch (NSException *e) {
-        NSLog(@"[ffaim] painel falhou: %@", e.reason);
-        g_win = nil;
+        NSLog(@"[ffaim] overlay falhou: %@", e.reason);
+        g_container = nil;
         g_panel = nil;
         g_esp = nil;
     }
@@ -542,6 +553,14 @@ static void ffpanel_init(void) {
     ff_hook_method([UIApplication class], @selector(sendEvent:),
                    (IMP)hook_sendEvent, (IMP *)&orig_sendEvent);
 
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{ ffInstallUI(0); });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        ffAttach();
+        // um timer so: reprende a camada se ela cair e atualiza a linha de status.
+        NSTimer *t = [NSTimer timerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) {
+            if (!g_container || !g_container.window) ffAttach();
+            [g_panel refreshStatus];
+        }];
+        [[NSRunLoop mainRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
+    });
 }
