@@ -1,0 +1,13 @@
+[0;36m==> [1;39mCleaning…[m
+[1;31m> [1;3;39mMaking all for tweak ffaim…[m
+[0;32m==> [1;39mCompiling ffhook.mm (arm64)…[m
+[0;32m==> [1;39mCompiling ffaim.mm (arm64)…[m
+[0;32m==> [1;39mCompiling ffac.mm (arm64)…[m
+[0;32m==> [1;39mCompiling ffpanel.mm (arm64)…[m
+[0;33m==> [1;39mLinking tweak ffaim (arm64)…[m
+[0;34m==> [1;39mGenerating debug symbols for ffaim…[m
+[0;34m==> [1;39mStripping ffaim (arm64)…[m
+[0;34m==> [1;39mSigning ffaim…[m
+[1;31m> [1;3;39mMaking stage for tweak ffaim…[m
+[0;36m==> [1;36mNotice:[m Neither plutil, ply, or libplist-utils are installed, so XML plist files were not optimized.
+dm.pl: building package `com.privateproject.ff2018.v128.ffaim:iphoneos-arm64' in `./packages/com.privateproject.ff2018.v128.ffaim_1.0.0_iphoneos-arm64.deb'

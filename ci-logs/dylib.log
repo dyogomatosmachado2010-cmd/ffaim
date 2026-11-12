@@ -1,0 +1,10 @@
+clang : /home/runner/theos/toolchain/linux/iphone/bin/clang++
+sdk   : /home/runner/theos/sdks/iPhoneOS16.5.sdk
+arch  : arm64
+assinado: /home/runner/theos/toolchain/linux/iphone/bin/ldid -S ffaim.dylib
+
+gerado: /home/runner/work/ffaim/ffaim/cheat/ffaim.dylib
+
+agora, no PC:
+  python tools/inject.py --app <freefireth.app> \
+      --dylib cheat/ffaim.dylib --out FreeFire_ffaim.ipa
