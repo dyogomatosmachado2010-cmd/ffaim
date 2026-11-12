@@ -7,7 +7,7 @@
 	<key>com.apple.developer.team-identifier</key>
 	<string>98573T3W6L</string>
 	<key>application-identifier</key>
-	<string>98573T3W6L.com.dts.freefireth</string>
+	<string>98573T3W6L.com.privateproject.ff2018.v128</string>
 	<key>dynamic-codesigning</key>
 	<true/>
 	<key>com.apple.security.cs.allow-jit</key>

@@ -10,8 +10,8 @@
 #   1. copia o .app pra uma pasta de trabalho (nao mexe no original)
 #   2. copia cada dylib pra <app>/Frameworks/ e assina ad-hoc se estiver sem assinatura
 #   3. adiciona um LC_LOAD_DYLIB "@executable_path/Frameworks/<nome>" no binario principal
-#   4. zera o LC_CODE_SIGNATURE do binario principal e apaga _CodeSignature
-#      (quem assina de novo e o TrollStore/Sideloadly/Esign/ldid)
+#   4. assina ad-hoc o binario principal (load commands mudaram) e todo Mach-O
+#      do bundle que esteja sem assinatura, e apaga a _CodeSignature antiga
 #   5. zipa em Payload/<app>/... e escreve o .ipa
 #
 # falha fechado: sem espaco no header, magic errado, dylib inexistente ou LC duplicado -> recusa.
@@ -88,12 +88,11 @@ def existing_dylibs(b, hdr):
 
 
 def strip_signature(b):
+    """le o LC_CODE_SIGNATURE atual (nao mexe no binario)"""
     hdr = parse(b)
     for off, cmd, cmdsize in iter_cmds(b, hdr):
         if cmd == LC_CODE_SIGNATURE:
-            dataoff, datasize = struct.unpack_from('<II', b, off + 8)
-            struct.pack_into('<II', b, off + 8, 0, 0)
-            return dataoff, datasize
+            return struct.unpack_from('<II', b, off + 8)
     return 0, 0
 
 
@@ -136,6 +135,52 @@ def extract_entitlements(b, dataoff, datasize):
     return None
 
 
+def read_bundle_id(app):
+    import plistlib
+    with open(os.path.join(app, 'Info.plist'), 'rb') as f:
+        try:
+            return plistlib.load(f).get('CFBundleIdentifier')
+        except Exception:
+            return None
+
+
+def align_entitlements(xml, bid):
+    """o application-identifier tem que casar com o CFBundleIdentifier do Info.plist,
+    senao o instalador recusa o bundle com erro de assinatura"""
+    if not bid:
+        return xml
+    text = xml.decode('utf8', 'replace')
+    i = text.find('<key>application-identifier</key>')
+    if i < 0:
+        return xml
+    s = text.find('<string>', i)
+    e = text.find('</string>', s)
+    if s < 0 or e < s:
+        return xml
+    cur = text[s + 8:e]
+    team = cur.split('.', 1)[0]
+    new = '%s.%s' % (team, bid)
+    if new == cur:
+        return xml
+    print('  entitlements: application-identifier %s -> %s' % (cur, new))
+    return (text[:s + 8] + new + text[e:]).encode('utf8')
+
+
+def sign_main(path, ident, ent):
+    """assina ad-hoc o executavel principal: o inject muda os load commands,
+    entao a assinatura original deixa de valer"""
+    if ffldid is None:
+        print('  AVISO: tools/ldid.py nao encontrado - binario principal fica sem assinatura')
+        return
+    with open(path, 'rb') as f:
+        data = f.read()
+    out, cd = ffldid.sign(data, ident, ent)
+    with open(path, 'wb') as f:
+        f.write(out)
+    print('  assinado adhoc: %s (%d -> %d bytes, cdhash %s)'
+          % (ident, len(data), len(out), hashlib.sha256(cd).hexdigest()[:16]))
+
+
 def has_code_signature(b):
     hdr = parse(b)
     for off, cmd, cmdsize in iter_cmds(b, hdr):
@@ -145,20 +190,25 @@ def has_code_signature(b):
 
 
 def sign_dylib(path, base):
-    """assina ad-hoc o dylib copiado, se ele nao tiver LC_CODE_SIGNATURE"""
+    """assina ad-hoc o dylib copiado, se estiver sem assinatura ou com assinatura quebrada"""
     with open(path, 'rb') as f:
         data = f.read()
-    if has_code_signature(data):
+    if ffldid is not None:
+        ok, why = ffldid.check(data)
+    else:
+        ok, why = has_code_signature(data), 'sem ldid.py'
+    if ok:
         print('  ja assinado: %s' % base)
         return
     if ffldid is None:
-        print('  AVISO: %s esta sem assinatura e tools/ldid.py nao foi encontrado' % base)
+        print('  AVISO: %s sem assinatura valida (%s) e tools/ldid.py nao foi encontrado'
+              % (base, why))
         return
     out, cd = ffldid.sign(data, base.rsplit('.', 1)[0])
     with open(path, 'wb') as f:
         f.write(out)
-    print('  assinado adhoc: %s (cdhash %s)'
-          % (base, hashlib.sha256(cd).hexdigest()[:16]))
+    print('  assinado adhoc: %s (%s, cdhash %s)'
+          % (base, why, hashlib.sha256(cd).hexdigest()[:16]))
 
 
 def add_dylib(b, path):
@@ -218,6 +268,63 @@ def find_main_binary(app):
     return name, path
 
 
+JUNK_SUFFIXES = ('.orig', '.bak', '.tmp', '.rej', '.old')
+
+
+def scrub_junk(app):
+    """remove backups que o ffpatch.py deixa dentro do .app (eles sao Mach-O sem
+    assinatura e quebram a validacao do bundle na instalacao)"""
+    removed = []
+    for root, dirs, files in os.walk(app):
+        for fn in files:
+            if fn.lower().endswith(JUNK_SUFFIXES):
+                p = os.path.join(root, fn)
+                os.remove(p)
+                removed.append(os.path.relpath(p, app))
+    for r in removed:
+        print('  removido lixo: %s' % r)
+    return removed
+
+
+def ensure_signed(app, skip):
+    """garante que todo Mach-O do bundle tenha assinatura valida.
+    assina ad-hoc quem estiver sem assinatura ou com assinatura quebrada
+    (o framework VK do IPA de origem, por exemplo, ja vem invalido)."""
+    if ffldid is None:
+        print('  AVISO: tools/ldid.py nao encontrado - binarios sem assinatura ficam como estao')
+        return []
+    signed = []
+    for root, dirs, files in os.walk(app):
+        for fn in files:
+            p = os.path.join(root, fn)
+            if os.path.abspath(p) == os.path.abspath(skip):
+                continue
+            try:
+                with open(p, 'rb') as f:
+                    head = f.read(4)
+            except OSError:
+                continue
+            if head not in (b'\xcf\xfa\xed\xfe', b'\xce\xfa\xed\xfe', b'\xca\xfe\xba\xbe'):
+                continue
+            with open(p, 'rb') as f:
+                data = f.read()
+            rel = os.path.relpath(p, app)
+            if head == b'\xca\xfe\xba\xbe':
+                print('  AVISO: %s e fat binary, assinatura manual necessaria' % rel)
+                continue
+            ok, why = ffldid.check(data)
+            if ok:
+                continue
+            ident = fn.rsplit('.', 1)[0]
+            out, cd = ffldid.sign(data, ident)
+            with open(p, 'wb') as f:
+                f.write(out)
+            signed.append(rel)
+            print('  assinado adhoc: %s (motivo: %s, cdhash %s)'
+                  % (rel, why, hashlib.sha256(cd).hexdigest()[:16]))
+    return signed
+
+
 def zip_dir(src_root, out_ipa):
     if os.path.exists(out_ipa):
         os.remove(out_ipa)
@@ -242,6 +349,8 @@ def main():
     ap.add_argument('--dylib', action='append', default=[], help='dylib a injetar (pode repetir)')
     ap.add_argument('--out', required=True, help='.ipa de saida')
     ap.add_argument('--work', default=None, help='pasta de trabalho (default: temp)')
+    ap.add_argument('--no-entitlements', action='store_true',
+                    help='assina o binario principal sem entitlements (instalador com perfil proprio)')
     a = ap.parse_args()
 
     app = os.path.abspath(a.app)
@@ -270,6 +379,9 @@ def main():
     print('copiando app...')
     shutil.copytree(app, dst_app, symlinks=True)
 
+    print('limpeza:')
+    scrub_junk(dst_app)
+
     exe_name, exe_path = find_main_binary(dst_app)
 
     fw = os.path.join(dst_app, 'Frameworks')
@@ -289,12 +401,17 @@ def main():
 
     dataoff, datasize = strip_signature(b)
     if datasize:
-        print('assinatura removida: LC_CODE_SIGNATURE 0x%X/0x%X' % (dataoff, datasize))
+        print('assinatura original: LC_CODE_SIGNATURE 0x%X/0x%X (sera refeita)' % (dataoff, datasize))
 
     ent = extract_entitlements(b, dataoff, datasize)
     ent_path = os.path.abspath(a.out) + '.entitlements.plist'
-    if ent:
+    if ent and a.no_entitlements:
+        print('entitlements: ignorados (--no-entitlements)')
+        ent = None
+        ent_path = None
+    elif ent:
         ent = add_jit_entitlements(ent)
+        ent = align_entitlements(ent, read_bundle_id(dst_app))
         with open(ent_path, 'wb') as f:
             f.write(ent)
         print('entitlements salvos: %s (com dynamic-codesigning)' % ent_path)
@@ -305,10 +422,21 @@ def main():
     with open(exe_path, 'wb') as f:
         f.write(b)
 
-    sig_dir = os.path.join(dst_app, '_CodeSignature')
-    if os.path.isdir(sig_dir):
-        shutil.rmtree(sig_dir)
-        print('_CodeSignature removida')
+    print('limpeza de _CodeSignature antigas:')
+    removed_sig = 0
+    for root, dirs, files in os.walk(dst_app):
+        if '_CodeSignature' in dirs:
+            p = os.path.join(root, '_CodeSignature')
+            shutil.rmtree(p)
+            dirs.remove('_CodeSignature')
+            removed_sig += 1
+            print('  removida: %s' % os.path.relpath(p, dst_app))
+    if not removed_sig:
+        print('  nenhuma')
+
+    print('assinatura dos binarios do bundle:')
+    sign_main(exe_path, exe_name, ent)
+    ensure_signed(dst_app, exe_path)
 
     print('empacotando...')
     n = zip_dir(work, os.path.abspath(a.out))
