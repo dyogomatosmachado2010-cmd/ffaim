@@ -238,6 +238,13 @@ static vm_prot_t data_page_writable(uintptr_t addr) {
         return prot;
     if (mprotect((void *)start, end - start, PROT_READ | PROT_WRITE) == 0)
         return prot;
+
+    // __DATA_CONST em iOS 14+ fica remapeado read-only. VM_PROT_COPY cria copia
+    // privada da pagina - a escrita vale pra este processo, que e o jogo.
+    if (vm_protect(mach_task_self(), (vm_address_t)start,
+                   (vm_size_t)(end - start), false,
+                   (vm_prot_t)(VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY)) == KERN_SUCCESS)
+        return prot;
     return 0;
 }
 

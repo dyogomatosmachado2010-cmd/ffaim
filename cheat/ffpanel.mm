@@ -8,7 +8,17 @@
 #include "ffhook.h"
 
 #define PANEL_W 268.0f
-#define HEADER_H 38.0f
+#define HEADER_H 44.0f
+
+// paleta Lunar: preto quente de fundo, bege lunar no texto e nos controles
+#define LC_BG     [UIColor colorWithRed:0.043 green:0.041 blue:0.039 alpha:0.97]
+#define LC_SURF   [UIColor colorWithRed:0.082 green:0.078 blue:0.071 alpha:1.0]
+#define LC_BEIGE  [UIColor colorWithRed:0.910 green:0.859 blue:0.749 alpha:1.0]
+#define LC_DIM    [UIColor colorWithRed:0.639 green:0.596 blue:0.510 alpha:1.0]
+#define LC_FAINT  [UIColor colorWithRed:0.376 green:0.353 blue:0.306 alpha:1.0]
+#define LC_TEXT   [UIColor colorWithRed:0.898 green:0.886 blue:0.855 alpha:1.0]
+#define LC_LINE   [UIColor colorWithRed:0.910 green:0.859 blue:0.749 alpha:0.16]
+#define LC_TRACK  [UIColor colorWithWhite:1.0 alpha:0.12]
 
 // ---------------------------------------------------------------- esp view
 
@@ -73,7 +83,7 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
         CGFloat cx = (hx + fx) * 0.5f;
         CGRect box = CGRectMake(cx - bw * 0.5f, hy, bw, h);
 
-        UIColor *col = [UIColor colorWithRed:0.35 green:1.0 blue:0.45 alpha:0.95];
+        UIColor *col = [UIColor colorWithRed:0.910 green:0.859 blue:0.749 alpha:0.95];
 
         if (g_cfg.drawBox) {
             CGContextSetStrokeColorWithColor(ctx, col.CGColor);
@@ -87,7 +97,7 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
         }
 
         if (g_cfg.drawLine) {
-            CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithWhite:1.0 alpha:0.35].CGColor);
+            CGContextSetStrokeColorWithColor(ctx, [UIColor colorWithRed:0.910 green:0.859 blue:0.749 alpha:0.30].CGColor);
             CGContextMoveToPoint(ctx, W * 0.5f, H - 2);
             CGContextAddLineToPoint(ctx, cx, fy);
             CGContextStrokePath(ctx);
@@ -117,6 +127,7 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
 @end
 
 @implementation FFPanelView {
+    UIView      *_header;
     UIView      *_body;
     CGPoint      _dragStart;
     BOOL         _minimized;
@@ -137,7 +148,7 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     UILabel *l = [[UILabel alloc] initWithFrame:f];
     l.text = t;
     l.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
-    l.textColor = [UIColor colorWithWhite:0.93 alpha:1.0];
+    l.textColor = LC_TEXT;
     l.backgroundColor = [UIColor clearColor];
     return l;
 }
@@ -145,25 +156,42 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
 - (UILabel *)valueLabel:(CGRect)f {
     UILabel *l = [[UILabel alloc] initWithFrame:f];
     l.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightBold];
-    l.textColor = [UIColor colorWithRed:0.45 green:0.85 blue:1.0 alpha:1.0];
+    l.textColor = LC_BEIGE;
     l.textAlignment = NSTextAlignmentRight;
     l.backgroundColor = [UIColor clearColor];
     return l;
 }
 
+- (UISwitch *)mkSwitch:(CGRect)f on:(BOOL)on {
+    UISwitch *s = [[UISwitch alloc] initWithFrame:f];
+    s.transform = CGAffineTransformMakeScale(0.78, 0.78);
+    s.onTintColor = LC_BEIGE;
+    s.on = on;
+    [s addTarget:self action:@selector(onSwitch) forControlEvents:UIControlEventValueChanged];
+    return s;
+}
+
+- (UISlider *)mkSlider:(CGRect)f min:(float)mn max:(float)mx val:(float)v sel:(SEL)sel {
+    UISlider *s = [[UISlider alloc] initWithFrame:f];
+    s.minimumValue = mn;
+    s.maximumValue = mx;
+    s.value = v;
+    s.minimumTrackTintColor = LC_BEIGE;
+    s.maximumTrackTintColor = LC_TRACK;
+    s.thumbTintColor = LC_BEIGE;
+    [s addTarget:self action:sel forControlEvents:UIControlEventValueChanged];
+    [s addTarget:self action:@selector(onCommit) forControlEvents:
+        UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    return s;
+}
+
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self = [super initWithFrame:frame])) {
-        self.backgroundColor = [UIColor clearColor];
-        self.layer.cornerRadius = 16;
+        self.backgroundColor = LC_BG;
+        self.layer.cornerRadius = 18;
         self.layer.masksToBounds = YES;
         self.layer.borderWidth = 1.0;
-        self.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.12].CGColor;
-
-        UIBlurEffect *eff = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
-        UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:eff];
-        blur.frame = self.bounds;
-        blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [self addSubview:blur];
+        self.layer.borderColor = LC_LINE.CGColor;
 
         [self buildHeader];
         [self buildBody];
@@ -176,111 +204,118 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
 - (CGFloat)fullHeight { return _fullH; }
 
 - (void)buildHeader {
-    UIView *h = [[UIView alloc] initWithFrame:CGRectMake(0, 0, PANEL_W, HEADER_H)];
-    h.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.05];
-    [self addSubview:h];
+    _header = [[UIView alloc] initWithFrame:CGRectMake(0, 0, PANEL_W, HEADER_H)];
+    _header.backgroundColor = LC_SURF;
+    [self addSubview:_header];
 
-    UILabel *t = [self label:@"FF 1.28" frame:CGRectMake(14, 0, 120, HEADER_H)];
-    t.font = [UIFont monospacedSystemFontOfSize:13 weight:UIFontWeightBold];
-    t.textColor = [UIColor colorWithRed:0.45 green:0.85 blue:1.0 alpha:1.0];
-    [h addSubview:t];
+    UILabel *moon = [[UILabel alloc] initWithFrame:CGRectMake(12, 6, 20, 22)];
+    moon.text = @"☾";
+    moon.font = [UIFont systemFontOfSize:17 weight:UIFontWeightRegular];
+    moon.textColor = LC_BEIGE;
+    moon.backgroundColor = [UIColor clearColor];
+    [_header addSubview:moon];
+
+    UILabel *t = [self label:@"Lunar Mod 1.0" frame:CGRectMake(34, 5, PANEL_W - 84, 20)];
+    t.font = [UIFont monospacedSystemFontOfSize:14 weight:UIFontWeightBold];
+    t.textColor = LC_BEIGE;
+    [_header addSubview:t];
+
+    UILabel *sub = [self label:@"FF 1.28  ·  3 dedos x3"
+                         frame:CGRectMake(34, 23, PANEL_W - 84, 14)];
+    sub.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+    sub.textColor = LC_FAINT;
+    [_header addSubview:sub];
 
     UIButton *min = [UIButton buttonWithType:UIButtonTypeSystem];
-    min.frame = CGRectMake(PANEL_W - 40, 4, 30, 30);
+    min.frame = CGRectMake(PANEL_W - 40, (HEADER_H - 30) * 0.5f, 30, 30);
     [min setTitle:@"–" forState:UIControlStateNormal];
     min.titleLabel.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
-    [min setTitleColor:[UIColor colorWithWhite:0.85 alpha:1.0] forState:UIControlStateNormal];
+    [min setTitleColor:LC_BEIGE forState:UIControlStateNormal];
     [min addTarget:self action:@selector(onMinimize) forControlEvents:UIControlEventTouchUpInside];
-    [h addSubview:min];
+    [_header addSubview:min];
+
+    UIView *sep = [[UIView alloc] initWithFrame:CGRectMake(0, HEADER_H - 0.5f, PANEL_W, 0.5f)];
+    sep.backgroundColor = LC_LINE;
+    [_header addSubview:sep];
 
     UIPanGestureRecognizer *pan =
         [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
-    [h addGestureRecognizer:pan];
+    [_header addGestureRecognizer:pan];
 }
 
 - (void)buildBody {
-    CGFloat y = 6;
+    CGFloat y = 8;
     _body = [[UIView alloc] initWithFrame:CGRectMake(0, HEADER_H, PANEL_W, 10)];
     [self addSubview:_body];
 
     // aimbot
-    [_body addSubview:[self label:@"Aimbot" frame:CGRectMake(14, y, 160, 30)]];
-    _aimSw = [[UISwitch alloc] initWithFrame:CGRectMake(PANEL_W - 14 - 51, y + 1, 51, 31)];
-    _aimSw.transform = CGAffineTransformMakeScale(0.78, 0.78);
-    _aimSw.on = g_cfg.aimbot;
-    [_aimSw addTarget:self action:@selector(onSwitch) forControlEvents:UIControlEventValueChanged];
+    [_body addSubview:[self label:@"Aimbot" frame:CGRectMake(16, y, 160, 30)]];
+    _aimSw = [self mkSwitch:CGRectMake(PANEL_W - 16 - 51, y + 1, 51, 31) on:g_cfg.aimbot];
     [_body addSubview:_aimSw];
-    y += 34;
-
-    // esp
-    [_body addSubview:[self label:@"ESP" frame:CGRectMake(14, y, 160, 30)]];
-    _espSw = [[UISwitch alloc] initWithFrame:CGRectMake(PANEL_W - 14 - 51, y + 1, 51, 31)];
-    _espSw.transform = CGAffineTransformMakeScale(0.78, 0.78);
-    _espSw.on = g_cfg.esp;
-    [_espSw addTarget:self action:@selector(onSwitch) forControlEvents:UIControlEventValueChanged];
-    [_body addSubview:_espSw];
     y += 36;
 
+    // esp
+    [_body addSubview:[self label:@"ESP" frame:CGRectMake(16, y, 160, 30)]];
+    _espSw = [self mkSwitch:CGRectMake(PANEL_W - 16 - 51, y + 1, 51, 31) on:g_cfg.esp];
+    [_body addSubview:_espSw];
+    y += 38;
+
     // fov
-    [_body addSubview:[self label:@"FOV" frame:CGRectMake(14, y, 80, 18)]];
-    _fovVal = [self valueLabel:CGRectMake(PANEL_W - 70, y, 56, 18)];
+    [_body addSubview:[self label:@"FOV" frame:CGRectMake(16, y, 80, 18)]];
+    _fovVal = [self valueLabel:CGRectMake(PANEL_W - 72, y, 56, 18)];
     _fovVal.text = [NSString stringWithFormat:@"%.0f°", g_cfg.fov];
     [_body addSubview:_fovVal];
     y += 20;
-    _fovSl = [[UISlider alloc] initWithFrame:CGRectMake(14, y, PANEL_W - 28, 26)];
-    _fovSl.minimumValue = 5; _fovSl.maximumValue = 180;
-    _fovSl.value = g_cfg.fov;
-    [_fovSl addTarget:self action:@selector(onFov) forControlEvents:UIControlEventValueChanged];
-    [_fovSl addTarget:self action:@selector(onCommit) forControlEvents:
-        UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    _fovSl = [self mkSlider:CGRectMake(16, y, PANEL_W - 32, 26)
+                        min:5 max:180 val:g_cfg.fov sel:@selector(onFov)];
     [_body addSubview:_fovSl];
     y += 34;
 
     // smooth
-    [_body addSubview:[self label:@"Smooth" frame:CGRectMake(14, y, 80, 18)]];
-    _smoothVal = [self valueLabel:CGRectMake(PANEL_W - 70, y, 56, 18)];
+    [_body addSubview:[self label:@"Smooth" frame:CGRectMake(16, y, 80, 18)]];
+    _smoothVal = [self valueLabel:CGRectMake(PANEL_W - 72, y, 56, 18)];
     _smoothVal.text = [NSString stringWithFormat:@"%.0f%%", g_cfg.smooth * 100];
     [_body addSubview:_smoothVal];
     y += 20;
-    _smoothSl = [[UISlider alloc] initWithFrame:CGRectMake(14, y, PANEL_W - 28, 26)];
-    _smoothSl.minimumValue = 0; _smoothSl.maximumValue = 1;
-    _smoothSl.value = g_cfg.smooth;
-    [_smoothSl addTarget:self action:@selector(onSmooth) forControlEvents:UIControlEventValueChanged];
-    [_smoothSl addTarget:self action:@selector(onCommit) forControlEvents:
-        UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    _smoothSl = [self mkSlider:CGRectMake(16, y, PANEL_W - 32, 26)
+                          min:0 max:1 val:g_cfg.smooth sel:@selector(onSmooth)];
     [_body addSubview:_smoothSl];
     y += 34;
 
     // bone
     _boneSeg = [[UISegmentedControl alloc] initWithItems:@[@"Head", @"Neck", @"Chest", @"Hip"]];
-    _boneSeg.frame = CGRectMake(14, y, PANEL_W - 28, 28);
+    _boneSeg.frame = CGRectMake(16, y, PANEL_W - 32, 28);
     _boneSeg.selectedSegmentIndex = g_cfg.bone;
-    _boneSeg.tintColor = [UIColor colorWithRed:0.35 green:0.7 blue:1.0 alpha:1.0];
+    _boneSeg.tintColor = LC_BEIGE;
+    if (@available(iOS 13.0, *)) _boneSeg.selectedSegmentTintColor = LC_BEIGE;
+    [_boneSeg setTitleTextAttributes:@{
+        NSForegroundColorAttributeName: LC_DIM,
+        NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightSemibold]
+    } forState:UIControlStateNormal];
+    [_boneSeg setTitleTextAttributes:@{
+        NSForegroundColorAttributeName: [UIColor colorWithRed:0.06 green:0.05 blue:0.04 alpha:1.0],
+        NSFontAttributeName: [UIFont systemFontOfSize:11 weight:UIFontWeightBold]
+    } forState:UIControlStateSelected];
     [_boneSeg addTarget:self action:@selector(onBone) forControlEvents:UIControlEventValueChanged];
-    if (@available(iOS 13.0, *)) {
-        _boneSeg.selectedSegmentTintColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.9 alpha:1.0];
-    }
     [_body addSubview:_boneSeg];
-    y += 36;
+    y += 38;
 
     // team
-    [_body addSubview:[self label:@"Team check" frame:CGRectMake(14, y, 160, 30)]];
-    _teamSw = [[UISwitch alloc] initWithFrame:CGRectMake(PANEL_W - 14 - 51, y + 1, 51, 31)];
-    _teamSw.transform = CGAffineTransformMakeScale(0.78, 0.78);
-    _teamSw.on = g_cfg.teamCheck;
-    [_teamSw addTarget:self action:@selector(onSwitch) forControlEvents:UIControlEventValueChanged];
+    [_body addSubview:[self label:@"Team check" frame:CGRectMake(16, y, 160, 30)]];
+    _teamSw = [self mkSwitch:CGRectMake(PANEL_W - 16 - 51, y + 1, 51, 31) on:g_cfg.teamCheck];
     [_body addSubview:_teamSw];
-    y += 34;
+    y += 36;
 
-    UILabel *hint = [self label:@"3 dedos x3 = painel" frame:CGRectMake(14, y, PANEL_W - 28, 16)];
+    UILabel *hint = [self label:@"☾ 3 dedos x3 abre/fecha"
+                         frame:CGRectMake(16, y, PANEL_W - 32, 16)];
     hint.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
-    hint.textColor = [UIColor colorWithWhite:0.6 alpha:1.0];
+    hint.textColor = LC_FAINT;
     [_body addSubview:hint];
     y += 18;
 
-    _status = [self label:@"" frame:CGRectMake(14, y, PANEL_W - 28, 14)];
+    _status = [self label:@"" frame:CGRectMake(16, y, PANEL_W - 32, 14)];
     _status.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
-    _status.textColor = [UIColor colorWithWhite:0.55 alpha:1.0];
+    _status.textColor = LC_DIM;
     _status.adjustsFontSizeToFitWidth = YES;
     _status.minimumScaleFactor = 0.7;
     [_body addSubview:_status];
@@ -300,6 +335,9 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
         s = @"base: nao achou freefireth";
     } else if (!g_core_ready) {
         s = [NSString stringWithFormat:@"hook: %s", ff_hook_last_error];
+    } else if (g_core_hits > 0) {
+        s = [NSString stringWithFormat:@"hook:%s/%d  p:%d  t:%d",
+             g_core_mode, g_core_hits, g_core_players, g_core_ticks];
     } else {
         s = [NSString stringWithFormat:@"hook:%s  p:%d  t:%d",
              g_core_mode, g_core_players, g_core_ticks];

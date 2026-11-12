@@ -204,6 +204,7 @@ uintptr_t g_core_base    = 0;
 int       g_core_players = 0;
 int       g_core_ticks   = 0;
 const char *g_core_mode  = "-";
+int       g_core_hits    = 0;
 
 static void resolveBase(void) {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -524,6 +525,7 @@ static void ffaim_init(void) {
             return;
         }
         g_core_mode = "ptr";
+        g_core_hits = n;
     }
 
     g_core_ready = true;
