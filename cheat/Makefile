@@ -1,5 +1,7 @@
 TARGET = iphone:clang:latest:13.0
 ARCHS = arm64
+DEBUG = 0
+FINALPACKAGE = 1
 INSTALL_TARGET_PROCESSES = freefireth
 
 TWEAK_NAME = ffaim
