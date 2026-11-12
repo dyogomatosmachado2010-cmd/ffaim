@@ -63,6 +63,15 @@ int  ff_esp_snapshot(FFEspBox *out, int max);
 void ff_panel_toggle(void);
 bool ff_panel_visible(void);
 
+// anti-cheat / spoofer (ffac.mm)
+extern bool g_ac_patched;              // 1 = os tres CRCs/manifesto foram zerados
+extern char g_ac_error[96];            // "ac:off", "ac:2/3", "ac:nao carregado"
+int  ff_ac_install(void);              // 1 = AcSDK neutralizado
+const char *ff_ac_status(void);        // linha pronta pro painel
+const char *ff_spoof_id(void);         // UUID atual (36 chars)
+void ff_spoof_roll(void);              // gera e persiste um UUID novo
+int  ff_ban_wipe(void);                // keychain AC + defaults + arquivos de ban
+
 #ifdef __cplusplus
 }
 #endif

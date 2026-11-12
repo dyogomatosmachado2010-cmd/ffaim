@@ -141,7 +141,24 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     UILabel     *_fovVal;
     UILabel     *_smoothVal;
     UILabel     *_status;
+    UILabel     *_acStatus;
+    UIButton    *_spoofBtn;
+    UIButton    *_wipeBtn;
     UISegmentedControl *_boneSeg;
+}
+
+- (UIButton *)mkButton:(NSString *)title frame:(CGRect)f sel:(SEL)sel {
+    UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
+    b.frame = f;
+    [b setTitle:title forState:UIControlStateNormal];
+    b.titleLabel.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightBold];
+    [b setTitleColor:LC_BEIGE forState:UIControlStateNormal];
+    b.backgroundColor = LC_SURF;
+    b.layer.cornerRadius = 9;
+    b.layer.borderWidth = 1;
+    b.layer.borderColor = LC_LINE.CGColor;
+    [b addTarget:self action:sel forControlEvents:UIControlEventTouchUpInside];
+    return b;
 }
 
 - (UILabel *)label:(NSString *)t frame:(CGRect)f {
@@ -310,6 +327,15 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     [_body addSubview:_teamSw];
     y += 36;
 
+    // spoofer + limpeza de ban
+    _spoofBtn = [self mkButton:@"SPOOFAR" frame:CGRectMake(16, y, 114, 30)
+                          sel:@selector(onSpoof)];
+    [_body addSubview:_spoofBtn];
+    _wipeBtn = [self mkButton:@"LIMPAR BAN" frame:CGRectMake(PANEL_W - 16 - 114, y, 114, 30)
+                         sel:@selector(onWipe)];
+    [_body addSubview:_wipeBtn];
+    y += 38;
+
     UILabel *hint = [self label:@"☾ 3 dedos x3 abre/fecha"
                          frame:CGRectMake(16, y, PANEL_W - 32, 16)];
     hint.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
@@ -323,6 +349,14 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     _status.adjustsFontSizeToFitWidth = YES;
     _status.minimumScaleFactor = 0.7;
     [_body addSubview:_status];
+    y += 16;
+
+    _acStatus = [self label:@"" frame:CGRectMake(16, y, PANEL_W - 32, 14)];
+    _acStatus.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+    _acStatus.textColor = LC_BEIGE;
+    _acStatus.adjustsFontSizeToFitWidth = YES;
+    _acStatus.minimumScaleFactor = 0.7;
+    [_body addSubview:_acStatus];
     y += 16;
 
     _body.frame = CGRectMake(0, HEADER_H, PANEL_W, y);
@@ -348,6 +382,42 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
              g_core_mode, g_core_hits, g_core_players, g_core_ticks];
     }
     _status.text = s;
+
+    if (_acStatus) {
+        NSString *sid = [NSString stringWithUTF8String:ff_spoof_id()];
+        if (sid.length > 8) sid = [sid substringToIndex:8];
+        _acStatus.text = [NSString stringWithFormat:@"%s   id:%@", ff_ac_status(), sid];
+    }
+}
+
+- (void)alert:(NSString *)title body:(NSString *)body {
+    UIViewController *vc = self.window.rootViewController;
+    if (!vc) return;
+    UIAlertController *a =
+        [UIAlertController alertControllerWithTitle:title
+                                            message:body
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"OK"
+                                         style:UIAlertActionStyleDefault
+                                       handler:nil]];
+    [vc presentViewController:a animated:YES completion:nil];
+}
+
+- (void)onSpoof {
+    ff_spoof_roll();
+    [self refreshStatus];
+    [self alert:@"Spoof aplicado"
+           body:[NSString stringWithFormat:@"id: %s\nfecha e abre o jogo pra valer no login.",
+                                           ff_spoof_id()]];
+}
+
+- (void)onWipe {
+    int n = ff_ban_wipe();
+    ff_spoof_roll();
+    [self refreshStatus];
+    [self alert:@"Ban limpo"
+           body:[NSString stringWithFormat:@"%d itens removidos.\nid novo: %s",
+                                           n, ff_spoof_id()]];
 }
 
 - (void)onSwitch {
