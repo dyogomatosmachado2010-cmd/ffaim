@@ -1,0 +1,62 @@
+name: build-ffaim
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Theos
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/theos
+          key: theos-sdks-16.5-v1
+
+      - name: Instalar Theos + SDKs
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"
+          brew install ldid dpkg
+
+      - name: Ferramentas
+        run: |
+          brew install ldid dpkg >/dev/null 2>&1 || true
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "clang: $(xcrun --sdk iphoneos -f clang++)"
+          echo "sdk:   $(xcrun --sdk iphoneos --show-sdk-path)"
+          ls "$HOME/theos/sdks" | head -5
+          ls "$HOME/theos/lib/libsubstrate.dylib"
+
+      - name: Build .deb (jailbreak)
+        run: |
+          cd cheat
+          make clean package
+          ls -la packages/
+
+      - name: Build ffaim.dylib (sem jailbreak)
+        run: |
+          cd cheat
+          chmod +x build_dylib.sh
+          ./build_dylib.sh
+          ls -la ffaim.dylib libsubstrate.dylib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffaim-build
+          if-no-files-found: error
+          path: |
+            cheat/packages/*.deb
+            cheat/ffaim.dylib
+            cheat/libsubstrate.dylib

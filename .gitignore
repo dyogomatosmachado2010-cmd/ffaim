@@ -1,0 +1,33 @@
+# dumps e binarios grandes - ficam fora do repo
+dump.cs
+offsets_ff.txt
+*.ipa
+*.deb
+*.dylib
+*.orig
+*.zip
+*.tar
+*.7z
+
+# saida de recon (regeneravel)
+tools/*.txt
+
+# build
+.theos/
+cheat/packages/
+cheat/.theos/
+build/
+obj/
+**/obj/
+*.o
+*.log
+*.dSYM/
+
+# editor / sistema
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# nao vai pro repo
+AGENTS.md
