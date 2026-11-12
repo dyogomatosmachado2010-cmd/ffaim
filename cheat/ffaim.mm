@@ -94,8 +94,9 @@ static FQuat nlerp(FQuat a, FQuat b, float t) {
 // ---------------------------------------------------------------- config
 
 FFConfig g_cfg = {
-    /*aimbot*/ true, /*esp*/ true, /*teamCheck*/ true, /*visCheck*/ false,
+    /*aimbot*/ false, /*esp*/ false, /*teamCheck*/ true, /*visCheck*/ false,
     /*drawBox*/ true, /*drawLine*/ true, /*drawName*/ true, /*drawDist*/ true,
+    /*allowInline*/ false,
     /*bone*/ FF_BONE_HEAD,
     /*fov*/ 25.0f, /*smooth*/ 0.35f, /*maxDist*/ 250.0f, /*espMaxDist*/ 300.0f,
 };
@@ -163,6 +164,7 @@ static void cfgLoad(void) {
         }
         else if (k == "teamcheck") g_cfg.teamCheck = atoi(val) != 0;
         else if (k == "vischeck") g_cfg.visCheck = atoi(val) != 0;
+        else if (k == "inline") g_cfg.allowInline = atoi(val) != 0;
         else if (k == "box") g_cfg.drawBox = atoi(val) != 0;
         else if (k == "line") g_cfg.drawLine = atoi(val) != 0;
         else if (k == "name") g_cfg.drawName = atoi(val) != 0;
@@ -186,9 +188,9 @@ void ff_config_save(void) {
     }
     fprintf(f,
             "aimbot=%d\nesp=%d\nfov=%.1f\nmaxdist=%.0f\nespdist=%.0f\nsmooth=%.2f\n"
-            "bone=%s\nteamcheck=%d\nvischeck=%d\nbox=%d\nline=%d\nname=%d\ndist=%d\n",
+            "bone=%s\nteamcheck=%d\nvischeck=%d\ninline=%d\nbox=%d\nline=%d\nname=%d\ndist=%d\n",
             g_cfg.aimbot, g_cfg.esp, g_cfg.fov, g_cfg.maxDist, g_cfg.espMaxDist,
-            g_cfg.smooth, boneName, g_cfg.teamCheck, g_cfg.visCheck,
+            g_cfg.smooth, boneName, g_cfg.teamCheck, g_cfg.visCheck, g_cfg.allowInline,
             g_cfg.drawBox, g_cfg.drawLine, g_cfg.drawName, g_cfg.drawDist);
     fclose(f);
     struct stat st;
@@ -199,12 +201,14 @@ void ff_config_save(void) {
 
 static uintptr_t g_base = 0;
 
-bool      g_core_ready   = false;
-uintptr_t g_core_base    = 0;
-int       g_core_players = 0;
-int       g_core_ticks   = 0;
-const char *g_core_mode  = "-";
-int       g_core_hits    = 0;
+bool      g_core_ready     = false;
+bool      g_core_installed = false;
+uintptr_t g_core_base      = 0;
+int       g_core_players   = 0;
+int       g_core_ticks     = 0;
+const char *g_core_mode    = "-";
+int       g_core_hits      = 0;
+char      g_core_error[160] = "nao instalado";
 
 static void resolveBase(void) {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -484,14 +488,17 @@ static void hook_LateUpdate(void *self, void *method) {
 
 // ---------------------------------------------------------------- init
 
+// resolve tudo que o hook precisa, sem escrever um byte no processo do jogo.
 __attribute__((constructor))
 static void ffaim_init(void) {
     resolveBase();
     if (!g_base) {
         NSLog(@"[ffaim] freefireth nao encontrado no dyld");
+        snprintf(g_core_error, sizeof(g_core_error), "freefireth fora do dyld");
         return;
     }
     g_core_base = g_base;
+    g_core_ready = true;
 
     cfgLoad();
 
@@ -507,28 +514,76 @@ static void ffaim_init(void) {
     g_screenW         = at<fn_static_int>(RVA_Screen_GetWidth);
     g_screenH         = at<fn_static_int>(RVA_Screen_GetHeight);
 
-    void *target = (void *)(g_base + RVA_Player_LateUpdate);
+    snprintf(g_core_error, sizeof(g_core_error), "pronto, core desligado");
+    NSLog(@"[ffaim] base=0x%lx carregado (core desligado)",
+          (unsigned long)g_base);
+}
 
-    if (ff_hook_function(target, (void *)hook_LateUpdate, (void **)&orig_LateUpdate)) {
-        g_core_mode = "inline";
-    } else {
-        // app sideload nao deixa escrever em __TEXT. o ponteiro do metodo mora em
-        // __DATA/__DATA_CONST, que continua gravavel: troca o ponteiro e chama o
-        // original direto pelo endereco, sem trampoline e sem memoria executavel.
-        NSLog(@"[ffaim] inline recusado (%s), tentando ponteiro de metodo", ff_hook_last_error);
-        orig_LateUpdate = (void (*)(void *, void *))target;
-        int n = ff_patch_method_pointer(g_base, RVA_Player_LateUpdate, (void *)hook_LateUpdate);
-        if (n <= 0) {
-            orig_LateUpdate = nullptr;
-            NSLog(@"[ffaim] sem hook: %s", ff_hook_last_error);
-            g_core_ready = false;
-            return;
-        }
-        g_core_mode = "ptr";
-        g_core_hits = n;
+// troca o metodo do LateUpdate. chamado quando o usuario liga aimbot ou esp -
+// assim login, conexao e menu rodam com o binario intacto.
+int ff_core_install(void) {
+    if (g_core_installed) return 1;
+    if (!g_base) {
+        snprintf(g_core_error, sizeof(g_core_error), "base ausente");
+        return 0;
     }
 
-    g_core_ready = true;
-    NSLog(@"[ffaim] base=0x%lx modo=%s aimbot=%d esp=%d fov=%.0f",
-          (unsigned long)g_base, g_core_mode, g_cfg.aimbot, g_cfg.esp, g_cfg.fov);
+    void *target = (void *)(g_base + RVA_Player_LateUpdate);
+
+    // inline mexe em pagina de codigo; em sideload isso deixa a pagina COW sem
+    // assinatura e mata o app na chamada seguinte. so tenta se pedido no cfg.
+    if (g_cfg.allowInline &&
+        ff_hook_function(target, (void *)hook_LateUpdate, (void **)&orig_LateUpdate)) {
+        g_core_mode      = "inline";
+        g_core_hits      = 1;
+        g_core_installed = true;
+        snprintf(g_core_error, sizeof(g_core_error), "ok inline");
+        NSLog(@"[ffaim] hook inline ativo");
+        return 1;
+    }
+
+    // app sideload nao deixa escrever em __TEXT. o ponteiro do metodo mora em
+    // __DATA/__DATA_CONST: troca o ponteiro e chama o original direto pelo
+    // endereco, sem trampoline e sem memoria executavel.
+    orig_LateUpdate = (void (*)(void *, void *))target;
+    int n = ff_patch_method_pointer(g_base, RVA_Player_LateUpdate, (void *)hook_LateUpdate);
+    if (n <= 0) {
+        orig_LateUpdate = nullptr;
+        snprintf(g_core_error, sizeof(g_core_error), "%s", ff_hook_last_error);
+        NSLog(@"[ffaim] sem hook: %s", ff_hook_last_error);
+        return 0;
+    }
+
+    g_core_mode      = "ptr";
+    g_core_hits      = n;
+    g_core_installed = true;
+    snprintf(g_core_error, sizeof(g_core_error), "ok ponteiro x%d", n);
+    NSLog(@"[ffaim] ponteiro de metodo x%d aimbot=%d esp=%d fov=%.0f",
+          n, g_cfg.aimbot, g_cfg.esp, g_cfg.fov);
+    return 1;
+}
+
+void ff_core_remove(void) {
+    if (!g_core_installed) return;
+    if (strcmp(g_core_mode, "ptr") == 0) {
+        int n = ff_unpatch_method_pointers();
+        NSLog(@"[ffaim] ponteiros revertidos: %d", n);
+    }
+    // hook inline nao tem desfazer: o prologo foi sobrescrito.
+    g_core_installed = false;
+    g_core_hits      = 0;
+    g_core_mode      = "-";
+    orig_LateUpdate  = nullptr;
+
+    // sem hook ninguem atualiza o snapshot; limpa pra nao desenhar caixa velha.
+    os_unfair_lock_lock(&g_espLock);
+    g_espCount = 0;
+    os_unfair_lock_unlock(&g_espLock);
+
+    snprintf(g_core_error, sizeof(g_core_error), "core desligado");
+}
+
+void ff_core_sync(void) {
+    if (g_cfg.aimbot || g_cfg.esp) ff_core_install();
+    else ff_core_remove();
 }

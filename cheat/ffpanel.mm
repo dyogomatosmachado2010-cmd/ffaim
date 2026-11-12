@@ -42,7 +42,7 @@
 }
 
 - (void)onTick {
-    if (!self.hidden && g_cfg.esp) [self setNeedsDisplay];
+    if (!self.hidden && g_cfg.esp && g_core_installed) [self setNeedsDisplay];
 }
 
 static void drawText(NSString *s, CGPoint p, UIColor *c) {
@@ -196,6 +196,10 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
         [self buildHeader];
         [self buildBody];
 
+        // cfg salvo com aimbot/esp ligado instala o core agora; padrao e desligado.
+        ff_core_sync();
+        [self refreshStatus];
+
         self.frame = CGRectMake(frame.origin.x, frame.origin.y, PANEL_W, _fullH);
     }
     return self;
@@ -327,20 +331,21 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
 }
 
 // diagnostico na tela: o hook do LateUpdate e o que decide se aimbot/esp
-// funcionam. se ele foi recusado, o motivo aparece aqui e o jogo roda normal.
+// funcionam. com o core desligado nada foi escrito no jogo - e o estado em que
+// login e conexao rodam iguais ao app original.
 - (void)refreshStatus {
     if (!_status) return;
     NSString *s;
     if (!g_core_base) {
         s = @"base: nao achou freefireth";
-    } else if (!g_core_ready) {
-        s = [NSString stringWithFormat:@"hook: %s", ff_hook_last_error];
-    } else if (g_core_hits > 0) {
+    } else if (!g_core_installed) {
+        if (g_cfg.aimbot || g_cfg.esp)
+            s = [NSString stringWithFormat:@"erro: %s", g_core_error];
+        else
+            s = @"core:off  (liga aimbot ou esp)";
+    } else {
         s = [NSString stringWithFormat:@"hook:%s/%d  p:%d  t:%d",
              g_core_mode, g_core_hits, g_core_players, g_core_ticks];
-    } else {
-        s = [NSString stringWithFormat:@"hook:%s  p:%d  t:%d",
-             g_core_mode, g_core_players, g_core_ticks];
     }
     _status.text = s;
 }
@@ -349,7 +354,20 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     g_cfg.aimbot = _aimSw.on;
     g_cfg.esp = _espSw.on;
     g_cfg.teamCheck = _teamSw.on;
+
+    ff_core_sync();
+
+    // instalacao recusada: devolve o interruptor pro estado real em vez de
+    // deixar a UI dizendo que esta ligado.
+    if (!g_core_installed && (g_cfg.aimbot || g_cfg.esp)) {
+        g_cfg.aimbot = NO;
+        g_cfg.esp = NO;
+        _aimSw.on = NO;
+        _espSw.on = NO;
+    }
+
     ff_config_save();
+    [self refreshStatus];
 }
 
 - (void)onFov {

@@ -17,6 +17,7 @@ typedef struct {
     bool  drawLine;
     bool  drawName;
     bool  drawDist;
+    bool  allowInline;  // tenta hook inline em __TEXT antes do ponteiro (risco de COW)
     int   bone;
     float fov;          // graus
     float smooth;       // 0 = snap, 1 = travado
@@ -37,16 +38,25 @@ typedef struct {
 extern FFConfig g_cfg;
 
 // estado do core, pro painel mostrar na tela (sem precisar de log no aparelho)
-extern bool      g_core_ready;    // base achada + hook instalado
-extern uintptr_t g_core_base;     // base do freefireth em runtime
-extern int       g_core_players;  // jogadores no registry agora
-extern int       g_core_ticks;    // chamadas de LateUpdate desde o load
-extern const char *g_core_mode;   // "inline" | "ptr" | "-"
-extern int       g_core_hits;     // quantos ponteiros de metodo foram trocados
+extern bool      g_core_ready;     // base achada
+extern bool      g_core_installed; // metodo do jogo ja trocado agora
+extern uintptr_t g_core_base;      // base do freefireth em runtime
+extern int       g_core_players;   // jogadores no registry agora
+extern int       g_core_ticks;     // chamadas de LateUpdate desde o load
+extern const char *g_core_mode;    // "inline" | "ptr" | "-"
+extern int       g_core_hits;      // quantos ponteiros de metodo foram trocados
+extern char      g_core_error[160];// motivo da ultima falha de instalacao
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// instala/remove a troca do LateUpdate. nada e escrito no processo do jogo
+// antes de ff_core_install(): com aimbot e esp desligados o app roda igual ao
+// original, o que mantem login e conexao fora do caminho do mod.
+int  ff_core_install(void);   // 1 = instalado, 0 = falhou (motivo em g_core_error)
+void ff_core_remove(void);
+void ff_core_sync(void);      // instala se aimbot||esp, remove se nenhum
 
 void ff_config_save(void);
 int  ff_esp_snapshot(FFEspBox *out, int max);

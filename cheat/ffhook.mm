@@ -25,6 +25,7 @@
 #import <string.h>
 #import <stdint.h>
 #import <stdio.h>
+#import <os/lock.h>
 #import <libkern/OSCacheControl.h>
 
 #include "ffhook.h"
@@ -132,6 +133,9 @@ static bool roundtrip_ok(void *target) {
         return false;
     }
     if (!make_executable(target, 16)) {
+        // devolve EXECUTE mesmo no caminho de falha. pagina de codigo em RW
+        // mata o app na proxima chamada da funcao, e a sonda nao escreveu nada.
+        make_executable(target, 16);
         set_error("__TEXT nao volta pra RX depois do COW (sem dynamic-codesigning)");
         return false;
     }
@@ -261,20 +265,64 @@ static void data_page_restore(uintptr_t addr, vm_prot_t prot) {
 
 #define FF_SCAN_LIMIT (192u * 1024u * 1024u)
 
+// ---------------------------------------------------------------- slots trocados
+
+#define FF_PATCH_MAX 8
+
+struct PatchSlot { uintptr_t slot; uintptr_t orig; };
+
+static PatchSlot      g_patches[FF_PATCH_MAX];
+static int            g_patchCount = 0;
+static os_unfair_lock g_patchLock  = OS_UNFAIR_LOCK_INIT;
+
+// um slot so entra se os vizinhos tambem forem ponteiro de codigo. tabela de
+// metodos IL2CPP e um array de ponteiros pra __TEXT; dado solto (float, hash,
+// tamanho) que por acaso valha o endereco do metodo nao tem essa vizinhanca.
+static bool slot_is_method_table(uintptr_t p, uintptr_t lo, uintptr_t hi,
+                                 uintptr_t segStart, uintptr_t segEnd) {
+    if (p < segStart + 16 || p + 16 > segEnd) return false;
+
+    int codeNeighbors = 0;
+    for (int k = -2; k <= 2; k++) {
+        if (k == 0) continue;
+        uintptr_t v = *(volatile uintptr_t *)(p + (intptr_t)k * 8);
+        if (v >= lo && v < hi) codeNeighbors++;
+    }
+    return codeNeighbors >= 3;
+}
+
+static void record_patch(uintptr_t slot, uintptr_t orig) {
+    os_unfair_lock_lock(&g_patchLock);
+    for (int i = 0; i < g_patchCount; i++) {
+        if (g_patches[i].slot == slot) { g_patches[i].orig = orig; goto out; }
+    }
+    if (g_patchCount < FF_PATCH_MAX) {
+        g_patches[g_patchCount].slot = slot;
+        g_patches[g_patchCount].orig = orig;
+        g_patchCount++;
+    }
+out:
+    os_unfair_lock_unlock(&g_patchLock);
+}
+
 static int scan_data_segment(uintptr_t start, uintptr_t end,
-                             uintptr_t needle, void *replacement, int budget) {
+                             uintptr_t needle, void *replacement, int budget,
+                             uintptr_t textLo, uintptr_t textHi) {
     if (end <= start) return 0;
     if (end - start > FF_SCAN_LIMIT) end = start + FF_SCAN_LIMIT;
 
     int hits = 0;
     for (uintptr_t p = start; p + sizeof(uintptr_t) <= end; p += sizeof(uintptr_t)) {
         if (*(volatile uintptr_t *)p != needle) continue;
+        if (!slot_is_method_table(p, textLo, textHi, start, end)) continue;
 
         vm_prot_t old = data_page_writable(p);
         if (!old) continue;
 
+        uintptr_t before = *(uintptr_t *)p;
         *(uintptr_t *)p = (uintptr_t)replacement;
         data_page_restore(p, old);
+        record_patch(p, before);
 
         if (++hits >= budget) break;
     }
@@ -289,23 +337,30 @@ int ff_patch_method_pointer(uintptr_t image_base, uintptr_t rva, void *replaceme
     }
 
     uintptr_t slide = 0;
+    uintptr_t textLo = 0, textHi = 0;
     const struct load_command *lc = (const struct load_command *)(mh + 1);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         if (lc->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *sg = (const struct segment_command_64 *)lc;
             if (strcmp(sg->segname, "__TEXT") == 0) {
-                slide = image_base - (uintptr_t)sg->vmaddr;
+                slide  = image_base - (uintptr_t)sg->vmaddr;
+                textLo = slide + (uintptr_t)sg->vmaddr;
+                textHi = textLo + (uintptr_t)sg->vmsize;
                 break;
             }
         }
         lc = (const struct load_command *)((const uint8_t *)lc + lc->cmdsize);
+    }
+    if (!textHi) {
+        set_error("segmento __TEXT nao encontrado");
+        return 0;
     }
 
     const uintptr_t needle = image_base + rva;
     int hits = 0;
 
     lc = (const struct load_command *)(mh + 1);
-    for (uint32_t i = 0; i < mh->ncmds && hits < 8; i++) {
+    for (uint32_t i = 0; i < mh->ncmds && hits < FF_PATCH_MAX; i++) {
         if (lc->cmd == LC_SEGMENT_64) {
             const struct segment_command_64 *sg = (const struct segment_command_64 *)lc;
             const bool is_data = strcmp(sg->segname, "__DATA") == 0 ||
@@ -313,7 +368,8 @@ int ff_patch_method_pointer(uintptr_t image_base, uintptr_t rva, void *replaceme
             if (is_data && sg->vmsize) {
                 uintptr_t s = slide + (uintptr_t)sg->vmaddr;
                 hits += scan_data_segment(s, s + (uintptr_t)sg->vmsize,
-                                          needle, replacement, 8 - hits);
+                                          needle, replacement, FF_PATCH_MAX - hits,
+                                          textLo, textHi);
             }
         }
         lc = (const struct load_command *)((const uint8_t *)lc + lc->cmdsize);
@@ -323,9 +379,25 @@ int ff_patch_method_pointer(uintptr_t image_base, uintptr_t rva, void *replaceme
         snprintf(ff_hook_last_error, sizeof(ff_hook_last_error),
                  "ok (ponteiro de metodo x%d)", hits);
     } else {
-        set_error("nenhum ponteiro gravavel pro metodo");
+        set_error("nenhum ponteiro de metodo valido");
     }
     return hits;
+}
+
+int ff_unpatch_method_pointers(void) {
+    int n = 0;
+    os_unfair_lock_lock(&g_patchLock);
+    for (int i = 0; i < g_patchCount; i++) {
+        uintptr_t p = g_patches[i].slot;
+        vm_prot_t old = data_page_writable(p);
+        if (!old) continue;
+        *(uintptr_t *)p = g_patches[i].orig;
+        data_page_restore(p, old);
+        n++;
+    }
+    g_patchCount = 0;
+    os_unfair_lock_unlock(&g_patchLock);
+    return n;
 }
 
 // ---------------------------------------------------------------- api
