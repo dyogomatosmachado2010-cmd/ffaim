@@ -51,9 +51,9 @@ echo "arch  : $ARCH"
 "$CXX" $LD64 \
     -target "$ARCH-apple-ios13.0" \
     -isysroot "$SDK" \
-    -fobjc-arc -O2 -std=c++17 -fvisibility=hidden \
+    -fobjc-arc -O2 -std=c++17 -fvisibility=hidden -Wno-deprecated-declarations \
     -dynamiclib \
-    -framework UIKit -framework QuartzCore -framework Foundation \
+    -framework UIKit -framework QuartzCore -framework CoreGraphics -framework Foundation \
     ffaim.mm ffpanel.mm ffhook.mm \
     -install_name @executable_path/Frameworks/ffaim.dylib \
     -o ffaim.dylib

@@ -448,7 +448,15 @@ static void ffInstallUI(int attempt) {
             if (key) break;
         }
     }
-    if (!key) key = [UIApplication sharedApplication].keyWindow;
+    if (!key) {
+        // fallback pre-cena (iOS 12). o aviso de deprecated e silenciado no build.
+        id app = [UIApplication sharedApplication];
+        SEL kw = NSSelectorFromString(@"keyWindow");
+        if ([app respondsToSelector:kw]) {
+            IMP f = [app methodForSelector:kw];
+            if (f) key = ((id (*)(id, SEL))f)(app, kw);
+        }
+    }
 
     if (!key) {
         if (attempt < 80) {
