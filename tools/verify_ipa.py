@@ -148,6 +148,10 @@ def main():
     expect_appid = None
     if '--expect-appid' in sys.argv:
         expect_appid = sys.argv[sys.argv.index('--expect-appid') + 1]
+    no_sign_check = '--no-sign-check' in sys.argv
+    reference = None
+    if '--reference' in sys.argv:
+        reference = sys.argv[sys.argv.index('--reference') + 1]
     if not os.path.isfile(path):
         sys.exit('nao existe: %s' % path)
 
@@ -176,8 +180,10 @@ def main():
         print('%-46s %10d  %s' % (rel[:46], len(b), lines[0]))
         for extra in lines[1:]:
             print('%-46s %10s    %s' % ('', '', extra))
-        if not ok:
+        if not ok and not no_sign_check:
             fails += 1
+        elif not ok:
+            print('%-46s %10s    (ignorado: --no-sign-check)' % ('', ''))
 
     print('')
     info = plistlib.loads(z.read(root + 'Info.plist'))
@@ -214,10 +220,28 @@ def main():
         print('app-identifier : %s' % appid)
         if appid and bid and not appid.endswith('.' + bid):
             print('  AVISO: application-identifier nao casa com o bundle id')
-            fails += 1
+            print('         (o IPA original tem o mesmo desvio - o instalador gera os seus)')
+            if expect_appid:
+                fails += 1
         if expect_appid and appid != expect_appid:
             print('  AVISO: esperado %s' % expect_appid)
             fails += 1
+
+    if reference:
+        zr = zipfile.ZipFile(reference)
+        nr = {x for x in zr.namelist() if not x.endswith('/')}
+        nn = set(names)
+        print('')
+        print('comparacao com %s:' % os.path.basename(reference))
+        print('  original : %d arquivos' % len(nr))
+        print('  este     : %d arquivos' % len(nn))
+        print('  so aqui  : %s' % (sorted(nn - nr) or 'nada'))
+        print('  so no original: %s' % (sorted(nr - nn) or 'nada'))
+        changed = []
+        for x in sorted(nr & nn):
+            if zr.getinfo(x).CRC != z.getinfo(x).CRC:
+                changed.append(x[len(root):] if x.startswith(root) else x)
+        print('  conteudo diferente: %s' % (changed or 'nada'))
 
     print('')
     print('resultado: %s' % ('OK - pronto pra instalar' if not fails else '%d PROBLEMA(S)' % fails))

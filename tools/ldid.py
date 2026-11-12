@@ -281,6 +281,30 @@ def check(data):
     return True, 'ok'
 
 
+def strip(data):
+    """remove o LC_CODE_SIGNATURE e trunca o blob. devolve (bytes, tamanho_removido).
+    so funciona quando o comando e o ultimo do header (que e o caso de tudo que este
+    assinador cria) - senao recusa em vez de corromper o binario."""
+    b = bytearray(data)
+    hdr, linkedit, sig_cmd, _ = layout(b)
+    if sig_cmd is None:
+        return bytes(b), 0
+    dataoff, datasize = struct.unpack_from('<II', b, sig_cmd + 8)
+    header_end = 32 + hdr['sizeofcmds']
+    if sig_cmd + 16 != header_end:
+        die('LC_CODE_SIGNATURE nao e o ultimo load command - remocao nao e segura')
+    struct.pack_into('<I', b, 16, hdr['ncmds'] - 1)
+    struct.pack_into('<I', b, 20, hdr['sizeofcmds'] - 16)
+    b[sig_cmd:header_end] = b'\0' * 16
+    if dataoff and dataoff <= len(b):
+        b = b[:dataoff]
+    vmaddr, vmsize, fileoff, filesize = struct.unpack_from('<QQQQ', b, linkedit + 24)
+    new_filesize = len(b) - fileoff
+    if new_filesize != filesize:
+        struct.pack_into('<Q', b, linkedit + 48, new_filesize)
+    return bytes(b), datasize
+
+
 def verify(data):
     hdr, linkedit, sig_cmd, _ = layout(data)
     if sig_cmd is None:
@@ -367,7 +391,25 @@ def main():
     ap.add_argument('--verify', metavar='MACHO')
     ap.add_argument('--entitlements', metavar='PLIST')
     ap.add_argument('--identifier', metavar='ID')
+    ap.add_argument('--strip', metavar='MACHO', help='remove a assinatura (volta a ser unsigned)')
     a = ap.parse_args()
+
+    if a.strip:
+        if not os.path.isfile(a.strip):
+            die('nao existe: %s' % a.strip)
+        with open(a.strip, 'rb') as f:
+            data = f.read()
+        out, removed = strip(data)
+        if not removed:
+            print('%s ja estava sem assinatura' % a.strip)
+            sys.exit(0)
+        tmp = a.strip + '.tmp'
+        with open(tmp, 'wb') as f:
+            f.write(out)
+        os.replace(tmp, a.strip)
+        print('%s sem assinatura' % a.strip)
+        print('  tamanho : %d -> %d bytes (blob de %d removido)' % (len(data), len(out), removed))
+        sys.exit(0)
 
     if not a.sign and not a.verify:
         die('use --sign <arquivo> ou --verify <arquivo>')

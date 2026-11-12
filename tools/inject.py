@@ -269,15 +269,17 @@ def find_main_binary(app):
 
 
 JUNK_SUFFIXES = ('.orig', '.bak', '.tmp', '.rej', '.old')
+# arquivos que ferramentas de analise deixam dentro do .app e que nao existem no IPA original
+JUNK_NAMES = ('symbols.txt', 'dump.cs', 'offsets_ff.txt')
 
 
 def scrub_junk(app):
-    """remove backups que o ffpatch.py deixa dentro do .app (eles sao Mach-O sem
-    assinatura e quebram a validacao do bundle na instalacao)"""
+    """remove backups do ffpatch.py e restos de analise que ficam dentro do .app
+    (eles nao existem no IPA original e mudam a estrutura do bundle)"""
     removed = []
     for root, dirs, files in os.walk(app):
         for fn in files:
-            if fn.lower().endswith(JUNK_SUFFIXES):
+            if fn.lower().endswith(JUNK_SUFFIXES) or fn.lower() in JUNK_NAMES:
                 p = os.path.join(root, fn)
                 os.remove(p)
                 removed.append(os.path.relpath(p, app))
@@ -325,9 +327,10 @@ def ensure_signed(app, skip):
     return signed
 
 
-def zip_dir(src_root, out_ipa):
+def zip_dir(src_root, out_ipa, stored=()):
     if os.path.exists(out_ipa):
         os.remove(out_ipa)
+    stored = set(stored)
     n = 0
     with zipfile.ZipFile(out_ipa, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for root, dirs, files in os.walk(src_root):
@@ -338,7 +341,11 @@ def zip_dir(src_root, out_ipa):
             for f in files:
                 full = os.path.join(root, f)
                 rel = os.path.relpath(full, src_root).replace('\\', '/')
-                z.write(full, rel)
+                if rel in stored:
+                    # iTunesArtwork fica armazenado sem compressao, igual ao IPA original
+                    z.write(full, rel, compress_type=zipfile.ZIP_STORED)
+                else:
+                    z.write(full, rel)
                 n += 1
     return n
 
@@ -351,6 +358,11 @@ def main():
     ap.add_argument('--work', default=None, help='pasta de trabalho (default: temp)')
     ap.add_argument('--no-entitlements', action='store_true',
                     help='assina o binario principal sem entitlements (instalador com perfil proprio)')
+    ap.add_argument('--preserve-signatures', action='store_true',
+                    help='nao mexe em assinatura nenhuma: deixa o bundle com a mesma '
+                         'estrutura do IPA original (instalador reassina)')
+    ap.add_argument('--itunes-artwork', default=None,
+                    help='iTunesArtwork do IPA original (vai pro zip sem compressao, como no original)')
     a = ap.parse_args()
 
     app = os.path.abspath(a.app)
@@ -396,7 +408,8 @@ def main():
         base = os.path.basename(d)
         shutil.copy2(d, os.path.join(fw, base))
         print('  copia %s -> Frameworks/%s' % (base, base))
-        sign_dylib(os.path.join(fw, base), base)
+        if not a.preserve_signatures:
+            sign_dylib(os.path.join(fw, base), base)
         add_dylib(b, '@executable_path/Frameworks/' + base)
 
     dataoff, datasize = strip_signature(b)
@@ -422,24 +435,30 @@ def main():
     with open(exe_path, 'wb') as f:
         f.write(b)
 
-    print('limpeza de _CodeSignature antigas:')
-    removed_sig = 0
-    for root, dirs, files in os.walk(dst_app):
-        if '_CodeSignature' in dirs:
-            p = os.path.join(root, '_CodeSignature')
-            shutil.rmtree(p)
-            dirs.remove('_CodeSignature')
-            removed_sig += 1
-            print('  removida: %s' % os.path.relpath(p, dst_app))
-    if not removed_sig:
-        print('  nenhuma')
+    if a.preserve_signatures:
+        print('assinatura: preservada (estrutura igual ao IPA original)')
+    else:
+        print('limpeza de _CodeSignature antigas:')
+        removed_sig = 0
+        for root, dirs, files in os.walk(dst_app):
+            if '_CodeSignature' in dirs:
+                p = os.path.join(root, '_CodeSignature')
+                shutil.rmtree(p)
+                dirs.remove('_CodeSignature')
+                removed_sig += 1
+                print('  removida: %s' % os.path.relpath(p, dst_app))
+        if not removed_sig:
+            print('  nenhuma')
 
-    print('assinatura dos binarios do bundle:')
-    sign_main(exe_path, exe_name, ent)
-    ensure_signed(dst_app, exe_path)
+        print('assinatura dos binarios do bundle:')
+        sign_main(exe_path, exe_name, ent)
+        ensure_signed(dst_app, exe_path)
 
     print('empacotando...')
-    n = zip_dir(work, os.path.abspath(a.out))
+    if a.itunes_artwork:
+        shutil.copy2(a.itunes_artwork, os.path.join(work, 'iTunesArtwork'))
+        print('  iTunesArtwork: %s' % a.itunes_artwork)
+    n = zip_dir(work, os.path.abspath(a.out), stored=('iTunesArtwork',))
     print('ok: %s (%d arquivos)' % (os.path.abspath(a.out), n))
     print('')
     print('proximo passo: assinar e instalar')
