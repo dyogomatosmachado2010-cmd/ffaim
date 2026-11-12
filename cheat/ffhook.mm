@@ -282,10 +282,10 @@ int ff_patch_method_pointer(uintptr_t image_base, uintptr_t rva, void *replaceme
     }
 
     uintptr_t slide = 0;
-    const struct load_command *lc = (const void *)(mh + 1);
+    const struct load_command *lc = (const struct load_command *)(mh + 1);
     for (uint32_t i = 0; i < mh->ncmds; i++) {
         if (lc->cmd == LC_SEGMENT_64) {
-            const struct segment_command_64 *sg = (const void *)lc;
+            const struct segment_command_64 *sg = (const struct segment_command_64 *)lc;
             if (strcmp(sg->segname, "__TEXT") == 0) {
                 slide = image_base - (uintptr_t)sg->vmaddr;
                 break;
@@ -297,10 +297,10 @@ int ff_patch_method_pointer(uintptr_t image_base, uintptr_t rva, void *replaceme
     const uintptr_t needle = image_base + rva;
     int hits = 0;
 
-    lc = (const void *)(mh + 1);
+    lc = (const struct load_command *)(mh + 1);
     for (uint32_t i = 0; i < mh->ncmds && hits < 8; i++) {
         if (lc->cmd == LC_SEGMENT_64) {
-            const struct segment_command_64 *sg = (const void *)lc;
+            const struct segment_command_64 *sg = (const struct segment_command_64 *)lc;
             const bool is_data = strcmp(sg->segname, "__DATA") == 0 ||
                                  strcmp(sg->segname, "__DATA_CONST") == 0;
             if (is_data && sg->vmsize) {
