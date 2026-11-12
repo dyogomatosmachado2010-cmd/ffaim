@@ -41,6 +41,7 @@ extern bool      g_core_ready;    // base achada + hook instalado
 extern uintptr_t g_core_base;     // base do freefireth em runtime
 extern int       g_core_players;  // jogadores no registry agora
 extern int       g_core_ticks;    // chamadas de LateUpdate desde o load
+extern const char *g_core_mode;   // "inline" | "ptr" | "-"
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,6 +1,7 @@
 // ffhook.h - hook inline arm64 + troca de metodo ObjC, sem dependencia de substrate
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 #include <objc/runtime.h>
 
 #ifdef __cplusplus
@@ -14,6 +15,13 @@ bool ff_hook_function(void *target, void *replacement, void **trampoline);
 
 // troca a implementacao de um seletor. devolve a IMP anterior em *original.
 bool ff_hook_method(Class cls, SEL sel, IMP replacement, IMP *original);
+
+// fallback sem memoria executavel: procura, nos segmentos de dados da imagem,
+// ponteiros que apontem pro metodo (image_base + rva) e troca pelo replacement.
+// e o caminho que funciona em app sideload, onde __TEXT nao pode ser patchado
+// mas __DATA e __DATA_CONST continuam gravaveis.
+// devolve quantos ponteiros trocou (0 = nao achou).
+int ff_patch_method_pointer(uintptr_t image_base, uintptr_t rva, void *replacement);
 
 // motivo da ultima falha de ff_hook_function (string estatica, nunca NULL)
 extern char ff_hook_last_error[160];

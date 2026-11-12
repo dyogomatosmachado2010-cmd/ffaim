@@ -203,6 +203,7 @@ bool      g_core_ready   = false;
 uintptr_t g_core_base    = 0;
 int       g_core_players = 0;
 int       g_core_ticks   = 0;
+const char *g_core_mode  = "-";
 
 static void resolveBase(void) {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -254,13 +255,16 @@ static void regAdd(void *p) {
 
 // ---------------------------------------------------------------- game calls
 
-typedef bool (*fn_bool_this)(void *);
-typedef int  (*fn_int_this)(void *);
-typedef void *(*fn_ptr_this)(void *);
-typedef FVec3 (*fn_vec3_this)(void *);
-typedef FVec3 (*fn_w2s)(void *, FVec3);
-typedef void *(*fn_static_ptr)(void *);
-typedef int  (*fn_static_int)(void *);
+// assinatura real de um metodo IL2CPP: (this, const MethodInfo*). o segundo
+// argumento e o MethodInfo que o jogo passa; nos chamamos com nullptr, que e o
+// que todo mod de il2cpp faz - o ponteiro so e lido em metodo generico.
+typedef bool   (*fn_bool_this)(void *, void *);
+typedef int    (*fn_int_this)(void *, void *);
+typedef void  *(*fn_ptr_this)(void *, void *);
+typedef FVec3  (*fn_vec3_this)(void *, void *);
+typedef FVec3  (*fn_w2s)(void *, FVec3, void *);
+typedef void  *(*fn_static_ptr)(void *);
+typedef int    (*fn_static_int)(void *);
 
 static fn_bool_this   g_isLocal = nullptr;
 static fn_bool_this   g_isVisible = nullptr;
@@ -280,20 +284,20 @@ static FVec3 bonePosition(void *p) {
     switch (g_cfg.bone) {
     case FF_BONE_NECK: {
         void *tf = rd_ptr(p, OFF_Player_HeadTF);
-        void *parent = tf ? g_transformParent(tf) : nullptr;
-        if (parent) return g_transformPos(parent);
-        FVec3 h = g_getHeadPos(p);
+        void *parent = tf ? g_transformParent(tf, nullptr) : nullptr;
+        if (parent) return g_transformPos(parent, nullptr);
+        FVec3 h = g_getHeadPos(p, nullptr);
         return {h.x, h.y - 0.12f, h.z};
     }
     case FF_BONE_CHEST: {
-        FVec3 h = g_getHeadPos(p), hip = g_getHipPos(p);
+        FVec3 h = g_getHeadPos(p, nullptr), hip = g_getHipPos(p, nullptr);
         return vadd(hip, vmul(vsub(h, hip), 0.55f));
     }
     case FF_BONE_HIP:
-        return g_getHipPos(p);
+        return g_getHipPos(p, nullptr);
     case FF_BONE_HEAD:
     default:
-        return g_getHeadPos(p);
+        return g_getHeadPos(p, nullptr);
     }
 }
 
@@ -351,16 +355,16 @@ static void espBuild(void *local) {
         if (dead) continue;
         if (g_cfg.teamCheck && team == localTeam) continue;
 
-        FVec3 head = g_getHeadPos(p);
-        FVec3 foot = g_getHipPos(p);
+        FVec3 head = g_getHeadPos(p, nullptr);
+        FVec3 foot = g_getHipPos(p, nullptr);
         if (!isfinite(head.x) || !isfinite(head.y) || !isfinite(head.z)) continue;
         if (!isfinite(foot.x) || !isfinite(foot.y) || !isfinite(foot.z)) continue;
 
-        FVec3 hp = g_w2s(cam, head);
-        FVec3 fp = g_w2s(cam, foot);
+        FVec3 hp = g_w2s(cam, head, nullptr);
+        FVec3 fp = g_w2s(cam, foot, nullptr);
         if (hp.z <= 0.01f || fp.z <= 0.01f) continue;   // atras da camera
 
-        FVec3 eye = g_getHeadPos(local);
+        FVec3 eye = g_getHeadPos(local, nullptr);
         float dist = vlen(vsub(head, eye));
         if (dist > g_cfg.espMaxDist) continue;
 
@@ -387,9 +391,9 @@ static void aimbot(void *self) {
     if (!g_cfg.aimbot) return;
     if (!rd_ptr(self, OFF_Player_HeadTF)) return;
 
-    FVec3 origin = g_getAimStart(self);
+    FVec3 origin = g_getAimStart(self, nullptr);
     if (!isfinite(origin.x) || !isfinite(origin.y) || !isfinite(origin.z))
-        origin = g_getHeadPos(self);
+        origin = g_getHeadPos(self, nullptr);
 
     FQuat cur = *(FQuat *)((char *)self + OFF_Player_AimRotation);
     FVec3 fwd = forwardFromQuat(cur);
@@ -408,7 +412,7 @@ static void aimbot(void *self) {
         if (!usable(p)) continue;
         if (rd_bool(p, OFF_Entity_IsDead)) continue;
         if (g_cfg.teamCheck && rd_i32(p, OFF_Player_TeamIndex) == localTeam) continue;
-        if (g_cfg.visCheck && g_isVisible && !g_isVisible(p)) continue;
+        if (g_cfg.visCheck && g_isVisible && !g_isVisible(p, nullptr)) continue;
 
         FVec3 pos = bonePosition(p);
         if (!isfinite(pos.x) || !isfinite(pos.y) || !isfinite(pos.z)) continue;
@@ -439,18 +443,18 @@ static void aimbot(void *self) {
 
 // ---------------------------------------------------------------- hook
 
-static void (*orig_LateUpdate)(void *) = nullptr;
+static void (*orig_LateUpdate)(void *, void *) = nullptr;
 
 // LateUpdate de um Player nao chama LateUpdate de outro, mas aimbot/esp chamam
 // metodos do jogo que podem reentrar em codigo gerenciado. o guarda evita
 // recursao se isso acontecer.
 static __thread int t_inHook = 0;
 
-static void hook_LateUpdate(void *self) {
+static void hook_LateUpdate(void *self, void *method) {
     if (t_inHook) return;
     t_inHook = 1;
 
-    if (orig_LateUpdate) orig_LateUpdate(self);
+    if (orig_LateUpdate) orig_LateUpdate(self, method);
 
     if (!g_base || !self) { t_inHook = 0; return; }
 
@@ -469,7 +473,7 @@ static void hook_LateUpdate(void *self) {
         g_core_players = n;
     }
 
-    if (g_isLocal && g_isLocal(self)) {
+    if (g_isLocal && g_isLocal(self, nullptr)) {
         aimbot(self);
         espBuild(self);
     }
@@ -502,16 +506,27 @@ static void ffaim_init(void) {
     g_screenW         = at<fn_static_int>(RVA_Screen_GetWidth);
     g_screenH         = at<fn_static_int>(RVA_Screen_GetHeight);
 
-    if (!ff_hook_function((void *)(g_base + RVA_Player_LateUpdate),
-                          (void *)hook_LateUpdate,
-                          (void **)&orig_LateUpdate)) {
-        // hook recusado: o jogo continua rodando normal, so sem aimbot/esp.
-        NSLog(@"[ffaim] hook recusado: %s", ff_hook_last_error);
-        g_core_ready = false;
-        return;
+    void *target = (void *)(g_base + RVA_Player_LateUpdate);
+
+    if (ff_hook_function(target, (void *)hook_LateUpdate, (void **)&orig_LateUpdate)) {
+        g_core_mode = "inline";
+    } else {
+        // app sideload nao deixa escrever em __TEXT. o ponteiro do metodo mora em
+        // __DATA/__DATA_CONST, que continua gravavel: troca o ponteiro e chama o
+        // original direto pelo endereco, sem trampoline e sem memoria executavel.
+        NSLog(@"[ffaim] inline recusado (%s), tentando ponteiro de metodo", ff_hook_last_error);
+        orig_LateUpdate = (void (*)(void *, void *))target;
+        int n = ff_patch_method_pointer(g_base, RVA_Player_LateUpdate, (void *)hook_LateUpdate);
+        if (n <= 0) {
+            orig_LateUpdate = nullptr;
+            NSLog(@"[ffaim] sem hook: %s", ff_hook_last_error);
+            g_core_ready = false;
+            return;
+        }
+        g_core_mode = "ptr";
     }
 
     g_core_ready = true;
-    NSLog(@"[ffaim] base=0x%lx aimbot=%d esp=%d fov=%.0f",
-          (unsigned long)g_base, g_cfg.aimbot, g_cfg.esp, g_cfg.fov);
+    NSLog(@"[ffaim] base=0x%lx modo=%s aimbot=%d esp=%d fov=%.0f",
+          (unsigned long)g_base, g_core_mode, g_cfg.aimbot, g_cfg.esp, g_cfg.fov);
 }

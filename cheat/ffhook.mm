@@ -20,6 +20,8 @@
 #import <sys/mman.h>
 #import <mach/mach.h>
 #import <mach/vm_map.h>
+#import <mach/vm_region.h>
+#import <mach-o/loader.h>
 #import <string.h>
 #import <stdint.h>
 #import <stdio.h>
@@ -194,6 +196,129 @@ static bool inline_hook(void *target, void *replacement, void **trampoline) {
     if (trampoline) *trampoline = tr;
     set_error("ok");
     return true;
+}
+
+// ---------------------------------------------------------------- ponteiro de metodo
+
+// regiao que contem addr. devolve false se nao for possivel consultar.
+static bool region_of(uintptr_t addr, uintptr_t *start, uintptr_t *end, vm_prot_t *prot) {
+    vm_address_t  region = (vm_address_t)(addr & ~(uintptr_t)(FF_PAGE - 1));
+    vm_size_t     size   = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t   obj    = MACH_PORT_NULL;
+
+    if (vm_region_64(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+                     (vm_region_info_t)&info, &count, &obj) != KERN_SUCCESS)
+        return false;
+    if (obj != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), obj);
+
+    if (addr < (uintptr_t)region || addr >= (uintptr_t)region + (uintptr_t)size)
+        return false;
+
+    if (start) *start = (uintptr_t)region;
+    if (end)   *end   = (uintptr_t)region + (uintptr_t)size;
+    if (prot)  *prot  = info.protection;
+    return true;
+}
+
+// libera escrita na pagina de DADOS que contem addr.
+// devolve a protecao original (0 = nao deu). pagina executavel nunca e tocada:
+// trocar codigo por ponteiro de dado aqui seria trocar um crash por outro.
+static vm_prot_t data_page_writable(uintptr_t addr) {
+    uintptr_t start = 0, end = 0;
+    vm_prot_t prot = 0;
+    if (!region_of(addr, &start, &end, &prot)) return 0;
+    if (prot & VM_PROT_EXECUTE) return 0;
+    if (prot & VM_PROT_WRITE) return prot;
+
+    if (vm_protect(mach_task_self(), (vm_address_t)start,
+                   (vm_size_t)(end - start), false,
+                   (vm_prot_t)(VM_PROT_READ | VM_PROT_WRITE)) == KERN_SUCCESS)
+        return prot;
+    if (mprotect((void *)start, end - start, PROT_READ | PROT_WRITE) == 0)
+        return prot;
+    return 0;
+}
+
+static void data_page_restore(uintptr_t addr, vm_prot_t prot) {
+    uintptr_t start = 0, end = 0;
+    if (!region_of(addr, &start, &end, nullptr)) return;
+    int mp = 0;
+    if (prot & VM_PROT_READ)    mp |= PROT_READ;
+    if (prot & VM_PROT_WRITE)   mp |= PROT_WRITE;
+    if (prot & VM_PROT_EXECUTE) mp |= PROT_EXEC;
+    vm_protect(mach_task_self(), (vm_address_t)start, (vm_size_t)(end - start), false, prot);
+    if (mp) mprotect((void *)start, end - start, mp);
+}
+
+#define FF_SCAN_LIMIT (192u * 1024u * 1024u)
+
+static int scan_data_segment(uintptr_t start, uintptr_t end,
+                             uintptr_t needle, void *replacement, int budget) {
+    if (end <= start) return 0;
+    if (end - start > FF_SCAN_LIMIT) end = start + FF_SCAN_LIMIT;
+
+    int hits = 0;
+    for (uintptr_t p = start; p + sizeof(uintptr_t) <= end; p += sizeof(uintptr_t)) {
+        if (*(volatile uintptr_t *)p != needle) continue;
+
+        vm_prot_t old = data_page_writable(p);
+        if (!old) continue;
+
+        *(uintptr_t *)p = (uintptr_t)replacement;
+        data_page_restore(p, old);
+
+        if (++hits >= budget) break;
+    }
+    return hits;
+}
+
+int ff_patch_method_pointer(uintptr_t image_base, uintptr_t rva, void *replacement) {
+    const struct mach_header_64 *mh = (const struct mach_header_64 *)image_base;
+    if (!mh || mh->magic != MH_MAGIC_64) {
+        set_error("imagem nao e Mach-O 64");
+        return 0;
+    }
+
+    uintptr_t slide = 0;
+    const struct load_command *lc = (const void *)(mh + 1);
+    for (uint32_t i = 0; i < mh->ncmds; i++) {
+        if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *sg = (const void *)lc;
+            if (strcmp(sg->segname, "__TEXT") == 0) {
+                slide = image_base - (uintptr_t)sg->vmaddr;
+                break;
+            }
+        }
+        lc = (const struct load_command *)((const uint8_t *)lc + lc->cmdsize);
+    }
+
+    const uintptr_t needle = image_base + rva;
+    int hits = 0;
+
+    lc = (const void *)(mh + 1);
+    for (uint32_t i = 0; i < mh->ncmds && hits < 8; i++) {
+        if (lc->cmd == LC_SEGMENT_64) {
+            const struct segment_command_64 *sg = (const void *)lc;
+            const bool is_data = strcmp(sg->segname, "__DATA") == 0 ||
+                                 strcmp(sg->segname, "__DATA_CONST") == 0;
+            if (is_data && sg->vmsize) {
+                uintptr_t s = slide + (uintptr_t)sg->vmaddr;
+                hits += scan_data_segment(s, s + (uintptr_t)sg->vmsize,
+                                          needle, replacement, 8 - hits);
+            }
+        }
+        lc = (const struct load_command *)((const uint8_t *)lc + lc->cmdsize);
+    }
+
+    if (hits > 0) {
+        snprintf(ff_hook_last_error, sizeof(ff_hook_last_error),
+                 "ok (ponteiro de metodo x%d)", hits);
+    } else {
+        set_error("nenhum ponteiro gravavel pro metodo");
+    }
+    return hits;
 }
 
 // ---------------------------------------------------------------- api

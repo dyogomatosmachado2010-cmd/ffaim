@@ -301,7 +301,8 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     } else if (!g_core_ready) {
         s = [NSString stringWithFormat:@"hook: %s", ff_hook_last_error];
     } else {
-        s = [NSString stringWithFormat:@"hook: ok  p:%d  t:%d", g_core_players, g_core_ticks];
+        s = [NSString stringWithFormat:@"hook:%s  p:%d  t:%d",
+             g_core_mode, g_core_players, g_core_ticks];
     }
     _status.text = s;
 }
