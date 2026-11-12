@@ -1,0 +1,9 @@
+Package: com.privateproject.ff2018.v128.ffaim
+Name: ffaim
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: painel flutuante (aimbot / fov / esp) para FreeFire 1.28
+Maintainer: dyogomatosmachado2010-cmd
+Author: dyogomatosmachado2010-cmd
+Section: Tweaks
+Depends: mobilesubstrate
