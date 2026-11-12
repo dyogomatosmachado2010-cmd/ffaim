@@ -5,14 +5,10 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-env:
-  HOMEBREW_NO_AUTO_UPDATE: 1
-  HOMEBREW_NO_INSTALL_CLEANUP: 1
-
 jobs:
   build:
-    runs-on: macos-14
-    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -21,23 +17,28 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/theos
-          key: theos-sdks-16.5-v1
+          key: theos-linux-v1
 
-      - name: Instalar Theos + SDKs
+      - name: Dependencias
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential fakeroot rsync curl perl zip unzip \
+            git libxml2-dev xz-utils dpkg-dev libtinfo6 ldid
+
+      - name: Instalar Theos (Linux)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
-          git clone --depth 1 https://github.com/theos/sdks.git "$HOME/theos/sdks"
-          brew install ldid dpkg
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          ls "$HOME/theos/toolchain/linux/iphone/bin/clang"
+          ls "$HOME/theos/sdks" | head -3
 
-      - name: Ferramentas
+      - name: Ambiente
         run: |
-          brew install ldid dpkg >/dev/null 2>&1 || true
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
-          echo "clang: $(xcrun --sdk iphoneos -f clang++)"
-          echo "sdk:   $(xcrun --sdk iphoneos --show-sdk-path)"
-          ls "$HOME/theos/sdks" | head -5
-          ls "$HOME/theos/lib/libsubstrate.dylib"
+          export THEOS="$HOME/theos"
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version | head -1
+          ls "$THEOS/sdks" | head -3
+          ls -la "$THEOS/lib/libsubstrate.dylib"
 
       - name: Build .deb (jailbreak)
         run: |
