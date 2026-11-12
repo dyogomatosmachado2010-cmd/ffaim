@@ -36,6 +36,12 @@ typedef struct {
 
 extern FFConfig g_cfg;
 
+// estado do core, pro painel mostrar na tela (sem precisar de log no aparelho)
+extern bool      g_core_ready;    // base achada + hook instalado
+extern uintptr_t g_core_base;     // base do freefireth em runtime
+extern int       g_core_players;  // jogadores no registry agora
+extern int       g_core_ticks;    // chamadas de LateUpdate desde o load
+
 #ifdef __cplusplus
 extern "C" {
 #endif

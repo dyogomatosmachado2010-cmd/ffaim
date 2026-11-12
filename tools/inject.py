@@ -406,10 +406,14 @@ def main():
     print('injeta:')
     for d in dylibs:
         base = os.path.basename(d)
-        shutil.copy2(d, os.path.join(fw, base))
+        dst = os.path.join(fw, base)
+        shutil.copy2(d, dst)
         print('  copia %s -> Frameworks/%s' % (base, base))
-        if not a.preserve_signatures:
-            sign_dylib(os.path.join(fw, base), base)
+        # SEMPRE assina o dylib injetado, inclusive com --preserve-signatures.
+        # dylib sem LC_CODE_SIGNATURE nao carrega em iOS: o dyld recusa e o app
+        # fecha na hora de abrir. assinar um arquivo que nao existe no IPA
+        # original nao muda a estrutura do bundle.
+        sign_dylib(dst, base)
         add_dylib(b, '@executable_path/Frameworks/' + base)
 
     dataoff, datasize = strip_signature(b)

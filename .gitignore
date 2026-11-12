@@ -34,3 +34,6 @@ AGENTS.md
 
 # logs publicados pelo CI
 ci-logs/
+
+__pycache__/
+*.pyc

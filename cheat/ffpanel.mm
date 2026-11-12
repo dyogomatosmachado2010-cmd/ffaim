@@ -128,8 +128,11 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     UISlider    *_smoothSl;
     UILabel     *_fovVal;
     UILabel     *_smoothVal;
+    UILabel     *_status;
     UISegmentedControl *_boneSeg;
 }
+
+- (void)refreshStatus;
 
 - (UILabel *)label:(NSString *)t frame:(CGRect)f {
     UILabel *l = [[UILabel alloc] initWithFrame:f];
@@ -276,8 +279,32 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     [_body addSubview:hint];
     y += 18;
 
+    _status = [self label:@"" frame:CGRectMake(14, y, PANEL_W - 28, 14)];
+    _status.font = [UIFont monospacedSystemFontOfSize:9 weight:UIFontWeightRegular];
+    _status.textColor = [UIColor colorWithWhite:0.55 alpha:1.0];
+    _status.adjustsFontSizeToFitWidth = YES;
+    _status.minimumScaleFactor = 0.7;
+    [_body addSubview:_status];
+    y += 16;
+
     _body.frame = CGRectMake(0, HEADER_H, PANEL_W, y);
     _fullH = HEADER_H + y;
+    [self refreshStatus];
+}
+
+// diagnostico na tela: o hook do LateUpdate e o que decide se aimbot/esp
+// funcionam. se ele foi recusado, o motivo aparece aqui e o jogo roda normal.
+- (void)refreshStatus {
+    if (!_status) return;
+    NSString *s;
+    if (!g_core_base) {
+        s = @"base: nao achou freefireth";
+    } else if (!g_core_ready) {
+        s = [NSString stringWithFormat:@"hook: %s", ff_hook_last_error];
+    } else {
+        s = [NSString stringWithFormat:@"hook: ok  p:%d  t:%d", g_core_players, g_core_ticks];
+    }
+    _status.text = s;
 }
 
 - (void)onSwitch {
@@ -438,6 +465,11 @@ static void ffInstallUI(int attempt);
 static void ffInstallUI(int attempt) {
     if (g_win) return;
 
+    if (![NSThread isMainThread]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ ffInstallUI(attempt); });
+        return;
+    }
+
     UIWindow *key = nil;
     if (@available(iOS 13.0, *)) {
         for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
@@ -466,29 +498,43 @@ static void ffInstallUI(int attempt) {
         return;
     }
 
-    CGRect sb = [UIScreen mainScreen].bounds;
+    @try {
+        CGRect sb = [UIScreen mainScreen].bounds;
 
-    g_win = [[FFOverlayWindow alloc] initWithFrame:sb];
-    if (@available(iOS 13.0, *)) g_win.windowScene = key.windowScene;
-    g_win.windowLevel = UIWindowLevelAlert + 100;
-    g_win.backgroundColor = [UIColor clearColor];
-    g_win.multipleTouchEnabled = YES;
+        g_win = [[FFOverlayWindow alloc] initWithFrame:sb];
+        if (@available(iOS 13.0, *)) g_win.windowScene = key.windowScene;
+        g_win.windowLevel = UIWindowLevelAlert + 100;
+        g_win.backgroundColor = [UIColor clearColor];
+        g_win.multipleTouchEnabled = YES;
 
-    UIViewController *vc = [UIViewController new];
-    vc.view.backgroundColor = [UIColor clearColor];
-    vc.view.multipleTouchEnabled = YES;
-    g_win.rootViewController = vc;
-    [g_win setHidden:NO];
+        UIViewController *vc = [UIViewController new];
+        vc.view.backgroundColor = [UIColor clearColor];
+        vc.view.multipleTouchEnabled = YES;
+        g_win.rootViewController = vc;
+        [g_win setHidden:NO];
 
-    g_esp = [[FFEspView alloc] initWithFrame:sb];
-    [vc.view addSubview:g_esp];
+        g_esp = [[FFEspView alloc] initWithFrame:sb];
+        [vc.view addSubview:g_esp];
 
-    g_panel = [[FFPanelView alloc] initWithFrame:CGRectMake(0, 0, PANEL_W, 10)];
-    CGFloat ph = [g_panel fullHeight];
-    g_panel.frame = CGRectMake(sb.size.width - PANEL_W - 12, 90, PANEL_W, ph);
-    [vc.view addSubview:g_panel];
+        g_panel = [[FFPanelView alloc] initWithFrame:CGRectMake(0, 0, PANEL_W, 10)];
+        CGFloat ph = [g_panel fullHeight];
+        g_panel.frame = CGRectMake(sb.size.width - PANEL_W - 12, 90, PANEL_W, ph);
+        [vc.view addSubview:g_panel];
 
-    NSLog(@"[ffaim] painel instalado em %.0fx%.0f", sb.size.width, sb.size.height);
+        // o painel mostra o estado do hook; sem isso o usuario nao tem como saber
+        // se o aimbot/esp estao ativos sem um console.
+        NSTimer *t = [NSTimer timerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) {
+            [g_panel refreshStatus];
+        }];
+        [[NSRunLoop mainRunLoop] addTimer:t forMode:NSRunLoopCommonModes];
+
+        NSLog(@"[ffaim] painel instalado em %.0fx%.0f", sb.size.width, sb.size.height);
+    } @catch (NSException *e) {
+        NSLog(@"[ffaim] painel falhou: %@", e.reason);
+        g_win = nil;
+        g_panel = nil;
+        g_esp = nil;
+    }
 }
 
 __attribute__((constructor))

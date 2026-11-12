@@ -199,6 +199,11 @@ void ff_config_save(void) {
 
 static uintptr_t g_base = 0;
 
+bool      g_core_ready   = false;
+uintptr_t g_core_base    = 0;
+int       g_core_players = 0;
+int       g_core_ticks   = 0;
+
 static void resolveBase(void) {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char *name = _dyld_get_image_name(i);
@@ -295,7 +300,11 @@ static FVec3 bonePosition(void *p) {
 static inline bool usable(void *p) {
     if (!p) return false;
     if ((uintptr_t)p & 7) return false;
-    return *(void **)p != nullptr;   // klass em +0x0
+    void *klass = *(void **)p;              // klass em +0x0
+    if (!klass) return false;
+    if ((uintptr_t)klass < 0x100000000ULL) return false;
+    if ((uintptr_t)klass & 7) return false;
+    return true;
 }
 
 // ---------------------------------------------------------------- esp snapshot
@@ -432,20 +441,40 @@ static void aimbot(void *self) {
 
 static void (*orig_LateUpdate)(void *) = nullptr;
 
-static void hook_LateUpdate(void *self) {
-    orig_LateUpdate(self);
+// LateUpdate de um Player nao chama LateUpdate de outro, mas aimbot/esp chamam
+// metodos do jogo que podem reentrar em codigo gerenciado. o guarda evita
+// recursao se isso acontecer.
+static __thread int t_inHook = 0;
 
-    if (!g_base || !self) return;
+static void hook_LateUpdate(void *self) {
+    if (t_inHook) return;
+    t_inHook = 1;
+
+    if (orig_LateUpdate) orig_LateUpdate(self);
+
+    if (!g_base || !self) { t_inHook = 0; return; }
 
     g_tick++;
+    g_core_ticks = (int)(g_tick & 0x7FFFFFFF);
     if ((g_tick & 0x1FF) == 0) cfgLoad();
 
     regAdd(self);
+
+    if ((g_tick & 0x3F) == 0) {
+        int n = 0;
+        for (int i = 0; i < kMaxPlayers; i++) {
+            void *p = g_players[i].player;
+            if (p && g_tick - g_players[i].tick <= 900 && usable(p)) n++;
+        }
+        g_core_players = n;
+    }
 
     if (g_isLocal && g_isLocal(self)) {
         aimbot(self);
         espBuild(self);
     }
+
+    t_inHook = 0;
 }
 
 // ---------------------------------------------------------------- init
@@ -457,6 +486,7 @@ static void ffaim_init(void) {
         NSLog(@"[ffaim] freefireth nao encontrado no dyld");
         return;
     }
+    g_core_base = g_base;
 
     cfgLoad();
 
@@ -475,10 +505,13 @@ static void ffaim_init(void) {
     if (!ff_hook_function((void *)(g_base + RVA_Player_LateUpdate),
                           (void *)hook_LateUpdate,
                           (void **)&orig_LateUpdate)) {
-        NSLog(@"[ffaim] hook falhou em LateUpdate (prologo PC-relativo?)");
+        // hook recusado: o jogo continua rodando normal, so sem aimbot/esp.
+        NSLog(@"[ffaim] hook recusado: %s", ff_hook_last_error);
+        g_core_ready = false;
         return;
     }
 
+    g_core_ready = true;
     NSLog(@"[ffaim] base=0x%lx aimbot=%d esp=%d fov=%.0f",
           (unsigned long)g_base, g_cfg.aimbot, g_cfg.esp, g_cfg.fov);
 }

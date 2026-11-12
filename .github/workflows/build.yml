@@ -77,13 +77,15 @@ jobs:
             cheat/packages/*.deb
             cheat/ffaim.dylib
 
-      # publica os logs num branch pra poder ler sem token
+      # publica os logs e o dylib num branch pra poder ler/baixar sem token
       - name: Publicar log
         if: always()
         run: |
           mkdir -p ci-logs
           cp deb.log ci-logs/ 2>/dev/null || true
           cp dylib.log ci-logs/ 2>/dev/null || true
+          cp cheat/ffaim.dylib ci-logs/ffaim.dylib 2>/dev/null || true
+          ls -la ci-logs
           git config user.name "ci"
           git config user.email "ci@local"
           git add -f ci-logs
