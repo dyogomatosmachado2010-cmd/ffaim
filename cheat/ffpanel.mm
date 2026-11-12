@@ -3,9 +3,9 @@
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
-#import <substrate.h>
 #import <math.h>
 #import "ffaim.h"
+#include "ffhook.h"
 
 #define PANEL_W 268.0f
 #define HEADER_H 38.0f
@@ -485,8 +485,8 @@ static void ffInstallUI(int attempt) {
 
 __attribute__((constructor))
 static void ffpanel_init(void) {
-    MSHookMessageEx([UIApplication class], @selector(sendEvent:),
-                    (IMP)hook_sendEvent, (IMP *)&orig_sendEvent);
+    ff_hook_method([UIApplication class], @selector(sendEvent:),
+                   (IMP)hook_sendEvent, (IMP *)&orig_sendEvent);
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{ ffInstallUI(0); });

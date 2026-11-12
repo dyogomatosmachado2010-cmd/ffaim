@@ -23,7 +23,6 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          set -x
           sudo apt-get update -y || true
           sudo apt-get install -y --no-install-recommends \
             build-essential fakeroot rsync curl perl zip unzip \
@@ -37,15 +36,16 @@ jobs:
         run: |
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
           ls "$HOME/theos/toolchain/linux/iphone/bin/clang"
-          ls "$HOME/theos/sdks" | head -3
 
       - name: Ambiente
         run: |
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
           export THEOS="$HOME/theos"
-          "$THEOS/toolchain/linux/iphone/bin/clang" --version | head -1
-          ls "$THEOS/sdks" | head -3
-          ls -la "$THEOS/lib/libsubstrate.dylib"
+          "$THEOS/toolchain/linux/iphone/bin/clang" --version | head -1 || true
+          echo "--- sdks ---"
+          ls "$THEOS/sdks" || true
+          echo "--- ld64 ---"
+          ls -la "$THEOS/toolchain/linux/iphone/bin/ld64" || echo "sem ld64 explicito"
 
       - name: Build .deb (jailbreak)
         run: |
@@ -58,7 +58,7 @@ jobs:
           cd cheat
           chmod +x build_dylib.sh
           ./build_dylib.sh
-          ls -la ffaim.dylib libsubstrate.dylib
+          ls -la ffaim.dylib
 
       - uses: actions/upload-artifact@v4
         with:
@@ -67,4 +67,3 @@ jobs:
           path: |
             cheat/packages/*.deb
             cheat/ffaim.dylib
-            cheat/libsubstrate.dylib

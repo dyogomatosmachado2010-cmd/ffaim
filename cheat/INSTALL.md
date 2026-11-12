@@ -41,10 +41,10 @@ O `.github/workflows/build.yml` já faz tudo:
 
 - clona `theos` + `theos/sdks`;
 - `make clean package` → `cheat/packages/*.deb` (rota jailbreak);
-- `cheat/build_dylib.sh` → `ffaim.dylib` + `libsubstrate.dylib` (rota sem jailbreak).
+- `cheat/build_dylib.sh` → `ffaim.dylib` (rota sem jailbreak, um arquivo só).
 
 **A.4** Quando ficar verde, abra o run → **Artifacts** → baixe `ffaim-build.zip`.
-Dentro: `ffaim.dylib`, `libsubstrate.dylib`, `*.deb`.
+Dentro: `ffaim.dylib`, `*.deb`.
 
 **A.5** Extraia em `C:\Users\user\Desktop\DUMPER\cheat\`. Vá para a seção **3**.
 
@@ -98,7 +98,7 @@ make clean package
 **B.5** Copie o resultado de volta pro Windows:
 
 ```bash
-cp ~/ff/cheat/ffaim.dylib ~/ff/cheat/libsubstrate.dylib /mnt/c/Users/user/Desktop/DUMPER/cheat/
+cp ~/ff/cheat/ffaim.dylib /mnt/c/Users/user/Desktop/DUMPER/cheat/
 cp ~/ff/cheat/packages/*.deb /mnt/c/Users/user/Desktop/DUMPER/cheat/ 2>/dev/null || true
 ```
 
@@ -147,7 +147,6 @@ cd C:\Users\user\Desktop\DUMPER
 python tools\inject.py `
   --app "$env:TEMP\ff_ipa\Payload\freefireth.app" `
   --dylib cheat\ffaim.dylib `
-  --dylib cheat\libsubstrate.dylib `
   --out FreeFire_ffaim.ipa
 ```
 
@@ -168,8 +167,6 @@ binario: freefireth (60430752 bytes)
 injeta:
   copia ffaim.dylib -> Frameworks/ffaim.dylib
   LC_LOAD_DYLIB @executable_path/Frameworks/ffaim.dylib (72 bytes)
-  copia libsubstrate.dylib -> Frameworks/libsubstrate.dylib
-  LC_LOAD_DYLIB @executable_path/Frameworks/libsubstrate.dylib (78 bytes)
 assinatura removida: LC_CODE_SIGNATURE 0x382FA90/0x171F10
 entitlements salvos: ...\FreeFire_ffaim.ipa.entitlements.plist
 ok: ...\FreeFire_ffaim.ipa
@@ -232,7 +229,6 @@ unzip -o FreeFire_ffaim.ipa -d ipa_build
 cd ipa_build/Payload
 ldid -S"../../FreeFire_ffaim.ipa.entitlements.plist" freefireth
 ldid -S freefireth.app/Frameworks/ffaim.dylib
-ldid -S freefireth.app/Frameworks/libsubstrate.dylib
 ldid -S freefireth.app/Frameworks/libac_sdk.dylib
 ```
 
@@ -244,7 +240,7 @@ keychain pode falhar. Use o `.entitlements.plist` que o `inject.py` salvou.
 ## 5. Ordem final (checklist)
 
 ```
-[ ] ffaim.dylib + libsubstrate.dylib compilados        (A ou B ou C)
+[ ] ffaim.dylib compilado                             (A ou B ou C)
 [ ] tools\ffpatch.py --verify  -> integridade: OK
 [ ] tools\inject.py -> FreeFire_ffaim.ipa + entitlements.plist
 [ ] instalar (TrollStore / Sideloadly / dpkg)

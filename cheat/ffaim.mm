@@ -3,7 +3,6 @@
 #import <Foundation/Foundation.h>
 #import <mach-o/dyld.h>
 #import <dlfcn.h>
-#import <substrate.h>
 #import <math.h>
 #import <sys/stat.h>
 #import <stdlib.h>
@@ -14,6 +13,7 @@
 
 #include "ffaim.h"
 #include "ff_offsets.h"
+#include "ffhook.h"
 
 // ---------------------------------------------------------------- math
 
@@ -472,9 +472,12 @@ static void ffaim_init(void) {
     g_screenW         = at<fn_static_int>(RVA_Screen_GetWidth);
     g_screenH         = at<fn_static_int>(RVA_Screen_GetHeight);
 
-    MSHookFunction((void *)(g_base + RVA_Player_LateUpdate),
-                   (void *)hook_LateUpdate,
-                   (void **)&orig_LateUpdate);
+    if (!ff_hook_function((void *)(g_base + RVA_Player_LateUpdate),
+                          (void *)hook_LateUpdate,
+                          (void **)&orig_LateUpdate)) {
+        NSLog(@"[ffaim] hook falhou em LateUpdate (prologo PC-relativo?)");
+        return;
+    }
 
     NSLog(@"[ffaim] base=0x%lx aimbot=%d esp=%d fov=%.0f",
           (unsigned long)g_base, g_cfg.aimbot, g_cfg.esp, g_cfg.fov);

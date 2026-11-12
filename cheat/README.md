@@ -166,10 +166,9 @@ make clean package
 Sem Theos, como dylib solta (rota sem jailbreak):
 
 ```sh
-./build_dylib.sh          # gera ffaim.dylib + libsubstrate.dylib
+./build_dylib.sh          # gera ffaim.dylib (um arquivo, sem dependencia)
 python tools/inject.py --app <freefireth.app> \
-    --dylib cheat/ffaim.dylib --dylib cheat/libsubstrate.dylib \
-    --out FreeFire_ffaim.ipa
+    --dylib cheat/ffaim.dylib --out FreeFire_ffaim.ipa
 ```
 
 Tutorial completo de compilação e instalação (WSL, GitHub Actions, TrollStore, Sideloadly,
@@ -186,7 +185,9 @@ mexe nos controles; o jogo lê no boot e recarrega quando o mtime muda.
 ## Notas
 
 - **Não compilei nem rodei nada aqui.** Sem clang/Theos nessa máquina. O código é arm64/arm64e e
-  depende de `substrate.h`; o primeiro build é no seu Theos.
+  não linka contra substrate: `ffhook.mm` resolve `MSHookFunction`/`MSHookMessageEx` em runtime se
+  existirem no aparelho e, se não existirem, cai no hook inline próprio (16 bytes de prólogo).
+  O primeiro build é no seu Theos.
 - O patch do `libac_sdk.dylib` **foi aplicado e verificado** neste IPA extraído
   (`--verify` → `integridade: OK`); os offsets das 7 checagens foram lidos do desassembly, não
   inferidos.

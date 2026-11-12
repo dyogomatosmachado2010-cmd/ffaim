@@ -91,8 +91,28 @@ def strip_signature(b):
     return 0, 0
 
 
+# chaves que o hook inline (cheat/ffhook.mm) precisa pra poder escrever em pagina
+# de codigo e criar o trampoline. sem elas o dylib carrega mas o hook falha.
+JIT_KEYS = ('dynamic-codesigning', 'com.apple.security.cs.allow-jit')
+
+
+def add_jit_entitlements(xml):
+    """insere as chaves de JIT no XML de entitlements, se ainda nao existirem"""
+    text = xml.decode('utf8', 'replace')
+    extra = ''
+    for k in JIT_KEYS:
+        if '<key>%s</key>' % k in text:
+            continue
+        extra += '\t<key>%s</key>\n\t<true/>\n' % k
+    if not extra:
+        return xml
+    i = text.rfind('</dict>')
+    if i < 0:
+        return xml
+    return (text[:i] + extra + text[i:]).encode('utf8')
+
+
 def extract_entitlements(b, dataoff, datasize):
-    """le o slot CSSLOT_ENTITLEMENTS do SuperBlob (big-endian) e devolve o XML"""
     if not dataoff or not datasize or dataoff + datasize > len(b):
         return None
     blob = bytes(b[dataoff:dataoff + datasize])
@@ -242,9 +262,10 @@ def main():
     ent = extract_entitlements(b, dataoff, datasize)
     ent_path = os.path.abspath(a.out) + '.entitlements.plist'
     if ent:
+        ent = add_jit_entitlements(ent)
         with open(ent_path, 'wb') as f:
             f.write(ent)
-        print('entitlements salvos: %s' % ent_path)
+        print('entitlements salvos: %s (com dynamic-codesigning)' % ent_path)
     else:
         ent_path = None
         print('sem entitlements embutidos (o app sera assinado sem eles)')

@@ -6,6 +6,10 @@
 #
 #   ARCH=arm64        (default; o binario do jogo e arm64)
 #   ARCH=arm64e       (se o app for arm64e)
+#
+# nao linka contra substrate: ffhook.mm resolve substrate em runtime via dlopen
+# e, se nao existir, usa hook inline proprio. o dylib roda em jailbreak e em
+# TrollStore/sideload sem depender de nada instalado.
 set -eu
 
 cd "$(dirname "$0")"
@@ -40,9 +44,6 @@ if [ -z "$SDK" ] && command -v xcrun >/dev/null 2>&1; then
 fi
 [ -n "$SDK" ] || { echo "sem SDK do iOS: rode o install-theos ou clone o theos/sdks"; exit 1; }
 
-# ---- libsubstrate (vai junto no Frameworks/) ----
-[ -f "$THEOS/lib/libsubstrate.dylib" ] || { echo "falta $THEOS/lib/libsubstrate.dylib"; exit 1; }
-
 echo "clang : $CXX"
 echo "sdk   : $SDK"
 echo "arch  : $ARCH"
@@ -53,18 +54,13 @@ echo "arch  : $ARCH"
     -fobjc-arc -O2 -std=c++17 -fvisibility=hidden \
     -dynamiclib \
     -framework UIKit -framework QuartzCore -framework Foundation \
-    -L"$THEOS/lib" -lsubstrate \
-    ffaim.mm ffpanel.mm \
+    ffaim.mm ffpanel.mm ffhook.mm \
     -install_name @executable_path/Frameworks/ffaim.dylib \
     -o ffaim.dylib
 
-cp "$THEOS/lib/libsubstrate.dylib" ./libsubstrate.dylib
-
 echo ""
 echo "gerado: $(pwd)/ffaim.dylib"
-echo "        $(pwd)/libsubstrate.dylib"
 echo ""
 echo "agora, no PC:"
 echo "  python tools/inject.py --app <freefireth.app> \\"
-echo "      --dylib cheat/ffaim.dylib --dylib cheat/libsubstrate.dylib \\"
-echo "      --out FreeFire_ffaim.ipa"
+echo "      --dylib cheat/ffaim.dylib --out FreeFire_ffaim.ipa"
