@@ -31,3 +31,6 @@ desktop.ini
 
 # nao vai pro repo
 AGENTS.md
+
+# logs publicados pelo CI
+ci-logs/

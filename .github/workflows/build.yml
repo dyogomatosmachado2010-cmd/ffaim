@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -48,22 +51,47 @@ jobs:
           ls -la "$THEOS/toolchain/linux/iphone/bin/ld64" || echo "sem ld64 explicito"
 
       - name: Build .deb (jailbreak)
+        id: deb
         run: |
           cd cheat
-          make clean package
-          ls -la packages/
+          set -o pipefail
+          make clean package 2>&1 | tee ../deb.log
 
       - name: Build ffaim.dylib (sem jailbreak)
+        id: dylib
+        if: always()
         run: |
           cd cheat
+          set -o pipefail
           chmod +x build_dylib.sh
-          ./build_dylib.sh
-          ls -la ffaim.dylib
+          ./build_dylib.sh 2>&1 | tee ../dylib.log
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: ffaim-build
-          if-no-files-found: error
+          if-no-files-found: warn
           path: |
+            deb.log
+            dylib.log
             cheat/packages/*.deb
             cheat/ffaim.dylib
+
+      # publica os logs num branch pra poder ler sem token
+      - name: Publicar log
+        if: always()
+        run: |
+          mkdir -p ci-logs
+          cp deb.log ci-logs/ 2>/dev/null || true
+          cp dylib.log ci-logs/ 2>/dev/null || true
+          git config user.name "ci"
+          git config user.email "ci@local"
+          git add -f ci-logs
+          git commit -m "ci: log run $GITHUB_RUN_NUMBER [skip ci]" || true
+          git push origin HEAD:refs/heads/ci-log --force || true
+
+      - name: Falhou?
+        if: always() && (steps.deb.outcome != 'success' || steps.dylib.outcome != 'success')
+        run: |
+          echo "deb=${{ steps.deb.outcome }} dylib=${{ steps.dylib.outcome }}"
+          exit 1
