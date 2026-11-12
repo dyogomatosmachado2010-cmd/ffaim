@@ -17,11 +17,11 @@ import sys
 AC_LITERALS = [
     b'libac_sdk', b'identifierForVendor', b'ffpp-ac-v2',
     b'Cydia', b'Sileo', b'Zebra', b'MobileSubstrate',
-    b'libsubstrate', b'libhooker', b'/bin/bash', b'sshd',
+    b'/bin/bash', b'sshd',
 ]
 # caminhos que outros modulos carregam de proposito (ffaim.cfg, dlopen do
 # substrate no ffhook). nao sao checados pelo libac_sdk; so' informativo.
-JB_PATHS = [b'/var/jb', b'/var/mobile/ffaim.cfg']
+JB_PATHS = [b'/var/jb', b'/var/mobile/ffaim.cfg', b'libsubstrate', b'libhooker']
 
 
 def sections(d):

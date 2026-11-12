@@ -68,11 +68,7 @@ static void xd(char *out, const uint8_t *in, size_t n) {
 static const uint8_t k_libac[]  = {0x37,0x0B,0x0B,0x11,0x14,0x21,0xF6,0xE8,0xF8,0xB4,0xC5,0xD1,0xC3,0xDF,0xDF};
 static const uint8_t k_idfv[]   = {0x32,0x06,0x0C,0x1E,0x03,0x17,0xE3,0xE5,0xF6,0xE8,0xE7,0xC7,0xDD,0xE0,0xD8,0xAA,0xAF,0xBD,0xAB};
 static const uint8_t k_uidev[]  = {0x0E,0x2B,0x2D,0x15,0x01,0x17,0xE6,0xE9};
-static const uint8_t k_acsvc[]  = {0x3D,0x04,0x19,0x00,0x5A,0x1F,0xE6,0xA1,0xE5,0xA8};
 static const uint8_t k_uidkey[] = {0x3D,0x04,0x47,0x05,0x1E,0x1A};
-static const uint8_t k_ban[]    = {0x39,0x03,0x07};
-static const uint8_t k_acw[]    = {0x3A,0x0C,0x1D,0x19,0x14,0x16,0xE0,0xED,0xE7};
-static const uint8_t k_acflag[] = {0x3A,0x01,0x36,0x16,0x1B,0x1F,0xE2};
 static const uint8_t k_caches[] = {0x18,0x03,0x0A,0x18,0x12,0x0D};
 static const uint8_t k_docs[]   = {0x1F,0x0D,0x0A,0x05,0x1A,0x1B,0xEB,0xF8,0xE0};
 
@@ -254,35 +250,65 @@ static void idfv_install(void) {
 
 // ---------------------------------------------------------------- ban wipe
 
+// o libac_sdk nao importa Security.framework: os itens "ffpp-ac-v2/enc" e
+// "/mac" sao chaves de cifra no proprio binario, nao servicos de keychain. quem
+// grava identidade no keychain e' o jogo. entao a limpeza e' por atributo:
+// varre os generic passwords do app e apaga so' os que cheiram a device/ban.
 static int wipe_keychain(void) {
-    char svc[16];
-    XD(svc, k_acsvc);
-    NSString *s = [NSString stringWithUTF8String:svc];
     NSDictionary *q = @{
-        (__bridge id)kSecClass:       (__bridge id)kSecClassGenericPassword,
-        (__bridge id)kSecAttrService: s,
+        (__bridge id)kSecClass:              (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecReturnAttributes:   @YES,
+        (__bridge id)kSecMatchLimit:         (__bridge id)kSecMatchLimitAll,
     };
-    OSStatus st = SecItemDelete((__bridge CFDictionaryRef)q);
-    return (st == errSecSuccess) ? 1 : 0;
-}
-
-static bool ban_key(NSString *k) {
-    char ban[8], acw[16], acf[12];
-    XD(ban, k_ban);
-    XD(acw, k_acw);
-    XD(acf, k_acflag);
-    NSString *lk  = k.lowercaseString;
-    NSString *nb  = [NSString stringWithUTF8String:ban];
-    NSString *na  = [NSString stringWithUTF8String:acw];
-    NSString *nf  = [NSString stringWithUTF8String:acf];
-
-    if ([lk containsString:nb]) {
-        // "banner" nao e' ban; o resto (ban, banned, ban_until, banhistory) e'
-        if ([lk containsString:@"banner"]) return false;
-        return true;
+    CFTypeRef res = NULL;
+    OSStatus st = SecItemCopyMatching((__bridge CFDictionaryRef)q, &res);
+    if (st != errSecSuccess || !res) {
+        if (res) CFRelease(res);
+        return 0;
     }
-    return [lk containsString:na] || [lk containsString:nf];
+
+    NSArray *items = (__bridge_transfer NSArray *)res;
+    NSArray *needles = @[@"ffpp", @"anticheat", @"ac_sdk", @"banned",
+                         @"banhistory", @"deviceid", @"device_id", @"device-id"];
+    int n = 0;
+    for (NSDictionary *it in items) {
+        NSString *svc  = it[(__bridge id)kSecAttrService] ?: @"";
+        NSString *acct = it[(__bridge id)kSecAttrAccount] ?: @"";
+        NSString *both = [[NSString stringWithFormat:@"%@ %@", svc, acct] lowercaseString];
+        BOOL hit = NO;
+        for (NSString *nd in needles)
+            if ([both containsString:nd]) { hit = YES; break; }
+        if (!hit) continue;
+
+        NSMutableDictionary *dq = [@{
+            (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        } mutableCopy];
+        if (svc.length)  dq[(__bridge id)kSecAttrService] = svc;
+        if (acct.length) dq[(__bridge id)kSecAttrAccount] = acct;
+        if (SecItemDelete((__bridge CFDictionaryRef)dq) == errSecSuccess) n++;
+    }
+    return n;
 }
+
+// "banner" e "bandwidth" nao sao ban. casa prefixo/sufixo com separador.
+static bool name_ban(NSString *low) {
+    if ([low containsString:@"banner"]) return false;
+    if ([low isEqualToString:@"ban"]) return true;
+    if ([low containsString:@"anticheat"] || [low containsString:@"ac_sdk"] ||
+        [low containsString:@"ffpp"] || [low containsString:@"acflag"] ||
+        [low containsString:@"ac_flag"])
+        return true;
+    static const char *pats[] = {
+        "_ban", ".ban", "ban_", "banned", "banuntil", "banexpire",
+        "banhistory", "banreason", "baninfo", "banstatus", "banlist",
+        "/ban", "ban.",
+    };
+    for (size_t i = 0; i < sizeof(pats) / sizeof(pats[0]); i++)
+        if ([low containsString:[NSString stringWithUTF8String:pats[i]]]) return true;
+    return false;
+}
+
+static bool ban_key(NSString *k) { return name_ban(k.lowercaseString); }
 
 static int wipe_defaults(void) {
     NSUserDefaults *d = [NSUserDefaults standardUserDefaults];
@@ -306,11 +332,7 @@ static int wipe_dir(NSString *root) {
     int seen = 0;
     for (NSString *rel in en) {
         if (++seen > 2000 || kill.count >= 64) break;
-        NSString *low = rel.lowercaseString;
-        if ([low containsString:@"banner"]) continue;
-        if ([low containsString:@"ban"] ||
-            [low containsString:@"anticheat"] ||
-            [low containsString:@"ac_sdk"])
+        if (name_ban(rel.lowercaseString))
             [kill addObject:[root stringByAppendingPathComponent:rel]];
     }
 
@@ -332,8 +354,8 @@ int ff_ban_wipe(void) {
     n += wipe_dir([home stringByAppendingPathComponent:[NSString stringWithUTF8String:c1]]);
     n += wipe_dir([home stringByAppendingPathComponent:[NSString stringWithUTF8String:c2]]);
 
-    // o baseline do AC fica no keychain e a palavra de flags em memoria;
-    // os dois voltam pro zero junto com a identidade nova.
+    // o libac_sdk nao persiste nada (so' le arquivos), mas o jogo guarda
+    // device id no keychain/defaults. zera as flags em memoria junto.
     if (g_ac_base) *(volatile uint32_t *)(g_ac_base + 0xCAA0) = 0;
     return n;
 }
