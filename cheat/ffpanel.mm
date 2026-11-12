@@ -113,6 +113,7 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
 
 @interface FFPanelView : UIView
 - (CGFloat)fullHeight;
+- (void)refreshStatus;
 @end
 
 @implementation FFPanelView {
@@ -131,8 +132,6 @@ static void drawText(NSString *s, CGPoint p, UIColor *c) {
     UILabel     *_status;
     UISegmentedControl *_boneSeg;
 }
-
-- (void)refreshStatus;
 
 - (UILabel *)label:(NSString *)t frame:(CGRect)f {
     UILabel *l = [[UILabel alloc] initWithFrame:f];
