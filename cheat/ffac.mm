@@ -52,9 +52,15 @@
 // ---------------------------------------------------------------- strings
 
 // XOR com chave corrente: nada disso aparece em `strings` no dylib.
+// o volatile no load e' obrigatorio: sem ele o clang do -O2 dobra o laco sobre
+// o array constante e grava a string DECODIFICADA em __cstring (aconteceu na
+// primeira build: `libac_sdk.dylib`, `identifierForVendor` e os caminhos de
+// jailbreak sairam em texto claro no binario).
+__attribute__((noinline))
 static void xd(char *out, const uint8_t *in, size_t n) {
+    volatile const uint8_t *v = in;
     for (size_t i = 0; i < n; i++)
-        out[i] = (char)(in[i] ^ (uint8_t)(0x5B + i * 7));
+        out[i] = (char)(v[i] ^ (uint8_t)(0x5B + i * 7));
     out[n] = 0;
 }
 #define XD(dst, arr) xd((dst), (arr), sizeof(arr))

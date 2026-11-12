@@ -13,11 +13,15 @@ import re
 import struct
 import sys
 
-SENSITIVE = [
+# literais que o ffac.mm ofusca: se aparecerem em claro, o -O2 dobrou o XOR.
+AC_LITERALS = [
     b'libac_sdk', b'identifierForVendor', b'ffpp-ac-v2',
-    b'Cydia', b'Sileo', b'Zebra', b'/var/jb', b'MobileSubstrate',
+    b'Cydia', b'Sileo', b'Zebra', b'MobileSubstrate',
     b'libsubstrate', b'libhooker', b'/bin/bash', b'sshd',
 ]
+# caminhos que outros modulos carregam de proposito (ffaim.cfg, dlopen do
+# substrate no ffhook). nao sao checados pelo libac_sdk; so' informativo.
+JB_PATHS = [b'/var/jb', b'/var/mobile/ffaim.cfg']
 
 
 def sections(d):
@@ -66,11 +70,14 @@ def main():
 
     # varre o arquivo inteiro: literal sensivel nao pode aparecer em claro
     low = d.lower()
-    bad = [p.decode() for p in SENSITIVE if p.lower() in low]
+    bad = [p.decode() for p in AC_LITERALS if p.lower() in low]
     if bad:
-        print('FALHA     literais em claro: %s' % ', '.join(bad))
+        print('FALHA     literais do AC em claro: %s' % ', '.join(bad))
     else:
-        print('strings   ok (nenhum literal sensivel)')
+        print('strings   ok (nenhum literal do AC em claro)')
+    jb = [p.decode() for p in JB_PATHS if p.lower() in low]
+    if jb:
+        print('aviso     caminhos de outros modulos: %s' % ', '.join(jb))
 
     # simbolos: o -x do linker deve ter deixado so o que o painel precisa
     off = 32
