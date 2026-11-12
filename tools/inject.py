@@ -4,18 +4,24 @@
 # uso:
 #   python tools/inject.py --app "<caminho do freefireth.app>" \
 #                          --dylib build/ffaim.dylib \
-#                          --dylib build/libsubstrate.dylib \
 #                          --out FreeFire_ffaim.ipa
 #
 # o que faz:
 #   1. copia o .app pra uma pasta de trabalho (nao mexe no original)
-#   2. copia cada dylib pra <app>/Frameworks/
+#   2. copia cada dylib pra <app>/Frameworks/ e assina ad-hoc se estiver sem assinatura
 #   3. adiciona um LC_LOAD_DYLIB "@executable_path/Frameworks/<nome>" no binario principal
-#   4. zera o LC_CODE_SIGNATURE e apaga _CodeSignature (quem assina de novo e o TrollStore/Sideloadly/ldid)
+#   4. zera o LC_CODE_SIGNATURE do binario principal e apaga _CodeSignature
+#      (quem assina de novo e o TrollStore/Sideloadly/Esign/ldid)
 #   5. zipa em Payload/<app>/... e escreve o .ipa
 #
 # falha fechado: sem espaco no header, magic errado, dylib inexistente ou LC duplicado -> recusa.
-import argparse, os, shutil, struct, sys, tempfile, zipfile
+import argparse, hashlib, os, shutil, struct, sys, tempfile, zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import ldid as ffldid
+except ImportError:
+    ffldid = None
 
 MH_MAGIC_64 = 0xFEEDFACF
 LC_SEGMENT_64 = 0x19
@@ -128,6 +134,31 @@ def extract_entitlements(b, dataoff, datasize):
             return None
         return blob[off + 8: off + l]
     return None
+
+
+def has_code_signature(b):
+    hdr = parse(b)
+    for off, cmd, cmdsize in iter_cmds(b, hdr):
+        if cmd == LC_CODE_SIGNATURE:
+            return True
+    return False
+
+
+def sign_dylib(path, base):
+    """assina ad-hoc o dylib copiado, se ele nao tiver LC_CODE_SIGNATURE"""
+    with open(path, 'rb') as f:
+        data = f.read()
+    if has_code_signature(data):
+        print('  ja assinado: %s' % base)
+        return
+    if ffldid is None:
+        print('  AVISO: %s esta sem assinatura e tools/ldid.py nao foi encontrado' % base)
+        return
+    out, cd = ffldid.sign(data, base.rsplit('.', 1)[0])
+    with open(path, 'wb') as f:
+        f.write(out)
+    print('  assinado adhoc: %s (cdhash %s)'
+          % (base, hashlib.sha256(cd).hexdigest()[:16]))
 
 
 def add_dylib(b, path):
@@ -253,6 +284,7 @@ def main():
         base = os.path.basename(d)
         shutil.copy2(d, os.path.join(fw, base))
         print('  copia %s -> Frameworks/%s' % (base, base))
+        sign_dylib(os.path.join(fw, base), base)
         add_dylib(b, '@executable_path/Frameworks/' + base)
 
     dataoff, datasize = strip_signature(b)

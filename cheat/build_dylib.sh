@@ -58,6 +58,22 @@ echo "arch  : $ARCH"
     -install_name @executable_path/Frameworks/ffaim.dylib \
     -o ffaim.dylib
 
+# ---- assinatura ad-hoc (obrigatoria: Mach-O sem assinatura quebra o install) ----
+LDID=""
+for c in "$THEOS/toolchain/linux/iphone/bin/ldid" "$THEOS/toolchain/linux/iphone/bin/ldid2"; do
+    [ -x "$c" ] && LDID="$c" && break
+done
+if [ -z "$LDID" ] && command -v ldid >/dev/null 2>&1; then
+    LDID="$(command -v ldid)"
+fi
+
+if [ -n "$LDID" ]; then
+    "$LDID" -S ffaim.dylib
+    echo "assinado: $LDID -S ffaim.dylib"
+else
+    echo "AVISO: sem ldid no toolchain - o inject.py assina no PC (tools/ldid.py)"
+fi
+
 echo ""
 echo "gerado: $(pwd)/ffaim.dylib"
 echo ""
