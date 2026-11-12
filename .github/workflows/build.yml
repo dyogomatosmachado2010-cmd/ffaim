@@ -20,10 +20,17 @@ jobs:
           key: theos-linux-v1
 
       - name: Dependencias
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential fakeroot rsync curl perl zip unzip \
-            git libxml2-dev xz-utils dpkg-dev libtinfo6 ldid
+          set -x
+          sudo apt-get update -y || true
+          sudo apt-get install -y --no-install-recommends \
+            build-essential fakeroot rsync curl perl zip unzip \
+            git xz-utils dpkg-dev libtinfo6 || true
+          sudo apt-get install -y libxml2-dev || echo "aviso: libxml2-dev"
+          sudo apt-get install -y ldid || echo "aviso: ldid (o toolchain traz o dele)"
+          command -v make && command -v dpkg-deb && echo deps-ok
 
       - name: Instalar Theos (Linux)
         if: steps.cache.outputs.cache-hit != 'true'
