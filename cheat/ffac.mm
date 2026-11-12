@@ -104,6 +104,37 @@ static int ff_access(const char *path, int mode) {
 
 DYLD_INTERPOSE(ff_access, access)
 
+// ---------------------------------------------------------------- usleep
+
+// a thread do watchdog (0x4CC8) faz: usleep(0x6A6CFC0) -> 7 checagens -> OR em
+// 0xCAA0 -> volta pro usleep. Zerar as flags na entrada do usleep significa
+// zerar logo depois de cada rajada de checagens: a janela em que 0xCAA0 fica
+// diferente de zero cai de 111 s para alguns microssegundos.
+static int (*orig_usleep)(useconds_t) = NULL;
+
+static void ac_clear(void) {
+    if (!g_ac_base) return;
+    volatile uint32_t *base = (volatile uint32_t *)g_ac_base;
+    if (g_ac_patched) {
+        base[0xC254 / 4] = 0;
+        base[0xC264 / 4] = 0;
+        base[0xC274 / 4] = 0;
+    }
+    base[0xCAA0 / 4] = 0;
+}
+
+static int ff_usleep(useconds_t us) {
+    bool long_sleep = (us >= 60000000u);   // so' o watchdog chega aqui
+    if (long_sleep) ac_clear();
+    if (!orig_usleep)
+        orig_usleep = (int (*)(useconds_t))dlsym(RTLD_DEFAULT, "usleep");
+    int r = orig_usleep ? orig_usleep(us) : -1;
+    if (long_sleep) ac_clear();            // quem acorda e reporta ve zero
+    return r;
+}
+
+DYLD_INTERPOSE(ff_usleep, usleep)
+
 // ---------------------------------------------------------------- AcSDK
 
 static uintptr_t ac_find(void) {
